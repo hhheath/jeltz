@@ -53,23 +53,7 @@ Jeltz fixes this by making physical devices first-class participants in the MCP 
 
 Jeltz runs on a gateway device (Raspberry Pi, laptop, Qualcomm IQ9, any Linux box). It connects to your physical devices over their native protocols (serial, MQTT, USB, HTTP) and exposes them as MCP tools through a single unified endpoint.
 
-```
-┌─────────────────────────────────────────────────────┐
-│  MCP Client (Claude, Cursor, local LLM, any IDE)    │
-└──────────────────────┬──────────────────────────────┘
-                       │ MCP protocol
-              ┌────────▼───────────┐
-              │      Jeltz         │
-              │  Gateway + CLI     │
-              │  (Python, Linux)   │
-              └──┬─────┬─────┬─────┘
-                 │     │     │
-              Serial  MQTT  USB   ← native device protocols
-                 │     │     │
-              ┌──▼──┐┌─▼──┐ ┌▼─────┐
-              │ESP32││Pico│ │Nicla │   ← your hardware
-              └─────┘└────┘ └──────┘
-```
+![Jeltz architecture](architecture.svg)
 
 **The AI stays in the cloud (or on a local LLM). Jeltz is just the plumbing that connects it to your devices.** An MCP server is not an AI model — it's a lightweight protocol endpoint. It uses negligible resources on the gateway.
 

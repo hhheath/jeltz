@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 540" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <style>
+    .t { font-size: 13px; font-weight: 600; }
+    .s { font-size: 11px; }
+    .m { opacity: 0.5; }
+    .bg-cl rect { fill: #F1EFE8; stroke: #B4B2A9; }
+    .bg-cl text { fill: #444441; }
+    .bg-gw > rect { fill: #E1F5EE; stroke: #0F6E56; }
+    .bg-gw > .t { fill: #085041; }
+    .bg-gw > .s { fill: #0F6E56; }
+    .bg-in rect { fill: #EEEDFE; stroke: #534AB7; }
+    .bg-in .t { fill: #3C3489; }
+    .bg-in .s { fill: #534AB7; }
+    .bg-st rect { fill: #E6F1FB; stroke: #185FA5; }
+    .bg-st .t { fill: #0C447C; }
+    .bg-st .s { fill: #185FA5; }
+    .bg-dv > rect { fill: #FAECE7; stroke: #993C1D; }
+    .bg-dv > .t { fill: #712B13; }
+    .bg-sn rect { fill: #FAEEDA; stroke: #854F0B; }
+    .bg-sn .t { fill: #633806; }
+    .bg-sn .s { fill: #854F0B; }
+    .bg-ei rect { fill: #FBEAF0; stroke: #993556; }
+    .bg-ei .t { fill: #72243E; }
+    .bg-ei .s { fill: #993556; }
+    .ln { stroke: #888780; stroke-width: 1.2; }
+    .ln-d { stroke: #888780; stroke-width: 1.2; stroke-dasharray: 4 3; }
+    .pl { fill: #888780; font-size: 10px; }
+    @media (prefers-color-scheme: dark) {
+      .bg-cl rect { fill: #444441; stroke: #B4B2A9; }
+      .bg-cl text { fill: #D3D1C7; }
+      .bg-gw > rect { fill: #085041; stroke: #5DCAA5; }
+      .bg-gw > .t { fill: #9FE1CB; }
+      .bg-gw > .s { fill: #5DCAA5; }
+      .bg-in rect { fill: #3C3489; stroke: #AFA9EC; }
+      .bg-in .t { fill: #CECBF6; }
+      .bg-in .s { fill: #AFA9EC; }
+      .bg-st rect { fill: #0C447C; stroke: #85B7EB; }
+      .bg-st .t { fill: #B5D4F4; }
+      .bg-st .s { fill: #85B7EB; }
+      .bg-dv > rect { fill: #712B13; stroke: #F0997B; }
+      .bg-dv > .t { fill: #F5C4B3; }
+      .bg-sn rect { fill: #633806; stroke: #EF9F27; }
+      .bg-sn .t { fill: #FAC775; }
+      .bg-sn .s { fill: #EF9F27; }
+      .bg-ei rect { fill: #72243E; stroke: #ED93B1; }
+      .bg-ei .t { fill: #F4C0D1; }
+      .bg-ei .s { fill: #ED93B1; }
+      .ln { stroke: #B4B2A9; }
+      .ln-d { stroke: #B4B2A9; }
+      .pl { fill: #B4B2A9; }
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <!-- MCP clients -->
+  <g class="bg-cl"><rect x="40" y="16" width="150" height="40" rx="8" stroke-width="0.5"/>
+    <text class="t" x="115" y="32" text-anchor="middle" dominant-baseline="central">Claude Desktop</text></g>
+  <g class="bg-cl"><rect x="205" y="16" width="150" height="40" rx="8" stroke-width="0.5"/>
+    <text class="t" x="280" y="32" text-anchor="middle" dominant-baseline="central">Claude Code</text></g>
+  <g class="bg-cl"><rect x="370" y="16" width="150" height="40" rx="8" stroke-width="0.5"/>
+    <text class="t" x="445" y="32" text-anchor="middle" dominant-baseline="central">Cursor / IDE</text></g>
+  <g class="bg-cl"><rect x="535" y="16" width="150" height="40" rx="8" stroke-width="0.5"/>
+    <text class="t" x="610" y="32" text-anchor="middle" dominant-baseline="central">Local LLM</text></g>
+
+  <!-- Arrows to gateway -->
+  <line x1="115" y1="56" x2="115" y2="86" class="ln" marker-end="url(#a)"/>
+  <line x1="280" y1="56" x2="280" y2="86" class="ln" marker-end="url(#a)"/>
+  <line x1="445" y1="56" x2="445" y2="86" class="ln" marker-end="url(#a)"/>
+  <line x1="610" y1="56" x2="610" y2="86" class="ln" marker-end="url(#a)"/>
+  <text class="pl" x="360" y="76" text-anchor="middle">MCP protocol (streamable HTTP / stdio)</text>
+
+  <!-- Gateway container -->
+  <g class="bg-gw">
+    <rect x="30" y="90" width="660" height="216" rx="14" stroke-width="0.5"/>
+    <text class="t" x="360" y="112" text-anchor="middle" dominant-baseline="central">Jeltz gateway</text>
+    <text class="s" x="360" y="127" text-anchor="middle" dominant-baseline="central">Python · runs on Raspberry Pi, Qualcomm IQ9, any Linux host</text>
+  </g>
+
+  <!-- Row 1: aggregator, fleet tools, discovery -->
+  <g class="bg-in"><rect x="52" y="140" width="195" height="44" rx="8" stroke-width="0.5"/>
+    <text class="t" x="150" y="156" text-anchor="middle" dominant-baseline="central">Tool aggregator</text>
+    <text class="s" x="150" y="172" text-anchor="middle" dominant-baseline="central">Merge + namespace</text></g>
+  <g class="bg-in"><rect x="262" y="140" width="195" height="44" rx="8" stroke-width="0.5"/>
+    <text class="t" x="360" y="156" text-anchor="middle" dominant-baseline="central">Fleet tools</text>
+    <text class="s" x="360" y="172" text-anchor="middle" dominant-baseline="central">History, anomalies</text></g>
+  <g class="bg-in"><rect x="472" y="140" width="195" height="44" rx="8" stroke-width="0.5"/>
+    <text class="t" x="570" y="156" text-anchor="middle" dominant-baseline="central">Device discovery</text>
+    <text class="s" x="570" y="172" text-anchor="middle" dominant-baseline="central">Health monitoring</text></g>
+
+  <!-- Row 2: storage, adapters -->
+  <g class="bg-st"><rect x="52" y="198" width="195" height="44" rx="8" stroke-width="0.5"/>
+    <text class="t" x="150" y="214" text-anchor="middle" dominant-baseline="central">SQLite store</text>
+    <text class="s" x="150" y="230" text-anchor="middle" dominant-baseline="central">Time-series + retention</text></g>
+  <g class="bg-in"><rect x="262" y="198" width="405" height="44" rx="8" stroke-width="0.5"/>
+    <text class="t" x="464" y="214" text-anchor="middle" dominant-baseline="central">Protocol adapters (plugin system)</text>
+    <text class="s" x="464" y="230" text-anchor="middle" dominant-baseline="central">Serial · MQTT · USB · HTTP · Mock</text></g>
+
+  <!-- Row 3: profiles bar -->
+  <g class="bg-in"><rect x="52" y="256" width="615" height="34" rx="6" stroke-width="0.5"/>
+    <text class="s" x="360" y="276" text-anchor="middle" dominant-baseline="central">TOML device profiles · Python handler escape hatches for complex protocols</text></g>
+
+  <!-- Arrows to devices -->
+  <line x1="165" y1="306" x2="165" y2="356" class="ln" marker-end="url(#a)"/>
+  <line x1="360" y1="306" x2="360" y2="356" class="ln" marker-end="url(#a)"/>
+  <line x1="555" y1="306" x2="555" y2="356" class="ln" marker-end="url(#a)"/>
+  <text class="pl" x="165" y="336" text-anchor="middle">Serial</text>
+  <text class="pl" x="360" y="336" text-anchor="middle">MQTT</text>
+  <text class="pl" x="555" y="336" text-anchor="middle">USB</text>
+
+  <!-- Device container -->
+  <g class="bg-dv">
+    <rect x="30" y="360" width="660" height="118" rx="14" stroke-width="0.5"/>
+    <text class="t" x="360" y="380" text-anchor="middle" dominant-baseline="central">Physical devices</text>
+  </g>
+
+  <g class="bg-sn"><rect x="52" y="392" width="195" height="68" rx="8" stroke-width="0.5"/>
+    <text class="t" x="150" y="412" text-anchor="middle" dominant-baseline="central">Sensor nodes</text>
+    <text class="s" x="150" y="428" text-anchor="middle" dominant-baseline="central">ESP32, RPi Pico</text>
+    <text class="s m" x="150" y="444" text-anchor="middle" dominant-baseline="central">Temp, vibration, pressure</text></g>
+  <g class="bg-sn"><rect x="262" y="392" width="195" height="68" rx="8" stroke-width="0.5"/>
+    <text class="t" x="360" y="412" text-anchor="middle" dominant-baseline="central">Vision + edge ML</text>
+    <text class="s" x="360" y="428" text-anchor="middle" dominant-baseline="central">Nicla Vision, Jetson</text>
+    <text class="s m" x="360" y="444" text-anchor="middle" dominant-baseline="central">On-device inference</text></g>
+  <g class="bg-sn"><rect x="472" y="392" width="195" height="68" rx="8" stroke-width="0.5"/>
+    <text class="t" x="570" y="412" text-anchor="middle" dominant-baseline="central">Actuators</text>
+    <text class="s" x="570" y="428" text-anchor="middle" dominant-baseline="central">Relays, motors, valves</text>
+    <text class="s m" x="570" y="444" text-anchor="middle" dominant-baseline="central">Commands via MCP</text></g>
+
+  <!-- Edge Impulse federation (dashed, Phase 3) -->
+  <g class="bg-ei"><rect x="30" y="498" width="660" height="34" rx="8" stroke-width="0.5" stroke-dasharray="5 3"/>
+    <text class="s" x="360" y="518" text-anchor="middle" dominant-baseline="central">Phase 3: Edge Impulse MCP server federation — inference + model metrics alongside device data</text></g>
+
+</svg>
