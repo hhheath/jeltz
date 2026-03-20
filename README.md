@@ -227,7 +227,7 @@ Then add to your MCP client config (e.g., Claude Desktop):
 
 - **Phase 1 (in progress):** Core framework, serial + MQTT adapters, SQLite time-series storage, fleet-level tools (cross-device reads, history, anomaly search), CLI, built-in profiles, mock adapter for testing
 - **Phase 2:** `jeltz-arduino` C++ library, USB adapter, community profile repository, device namespacing
-- **Phase 3:** Edge Impulse MCP server federation, local LLM integration, web dashboard, alert system, event streaming
+- **Phase 3:** Edge Impulse integration, local LLM integration, web dashboard, alert system, event streaming
 - **Phase 4:** Additional protocol adapters (Modbus, BLE, CAN bus), IQ9 reference deployment, additional ML platform integrations
 
 ## Development
