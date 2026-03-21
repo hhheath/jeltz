@@ -213,8 +213,8 @@ hatch run typecheck   # Mypy strict mode
 
 Jeltz is built in public. Follow along and contribute:
 
-- **Profiles:** The easiest way to contribute. Write a TOML profile for hardware you own, test it, submit a PR.
-- **Adapters:** New protocol support. Implement the `BaseAdapter` interface for your protocol.
+- **Profiles:** The easiest way to contribute. Write a TOML profile for hardware you own, test it, submit a PR. See the [writing profiles](docs/writing-profiles.md) guide.
+- **Adapters:** New protocol support. Implement the `BaseAdapter` interface for your protocol. See the [writing adapters](docs/writing-adapters.md) guide.
 - **Core:** Gateway, aggregator, CLI improvements.
 
 ## Why "Jeltz"?
