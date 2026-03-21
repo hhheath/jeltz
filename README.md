@@ -1,6 +1,6 @@
 # Jeltz
 
-> **Status: Early development.** Profile parsing, adapter interface, and mock adapter are working. Gateway, CLI, storage, and fleet tools are in progress. Star/watch to follow along.
+> **Status: Early development.** The gateway core is working: TOML profile parsing, MCP tool generation, device discovery, aggregator with per-device routing, fleet-level tools (cross-device reads, history, anomaly search), SQLite time-series storage with retention, and the MCP server endpoint. CLI is next. Star/watch to follow along.
 
 **Your sensors will be processed.**
 
