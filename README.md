@@ -20,7 +20,7 @@ A dashboard shows you numbers. Jeltz lets an LLM *reason about what they mean*:
 ```
 You: Anything weird going on?
 
-Claude: Mostly nominal, but two things worth attention:
+LLM: Mostly nominal, but two things worth attention:
 
 1. Tanks 2 and 5 are both climbing at 0.3°C/hr, but tank 5
    started rising 40 minutes after tank 2. They share glycol
@@ -106,7 +106,7 @@ $ jeltz add-device fermentation_temps.toml
 $ jeltz start
 ```
 
-Done. Claude can now read your fermentation temps.
+Done. Any LLM can now read your fermentation temps.
 
 ### Path 2: Arduino library (self-describing devices)
 
@@ -156,7 +156,7 @@ Jeltz will ship with profiles for common hardware:
 > Not yet published to PyPI. For now, install from source:
 
 ```bash
-git clone https://github.com/FORTHEBOIS/jeltz.git
+git clone https://github.com/hhheath/jeltz.git
 cd jeltz
 pip install -e .
 ```
@@ -183,7 +183,7 @@ jeltz start
 jeltz status
 ```
 
-Then add to your MCP client config (e.g., Claude Desktop):
+Then add to your MCP client config:
 
 ```json
 {
@@ -197,7 +197,7 @@ Then add to your MCP client config (e.g., Claude Desktop):
 
 ## Use cases
 
-**Edge AI development loop.** Deploy a model to a dev board with Edge Impulse, then use Claude Code to run inference batches across 50 test samples, generate a confusion matrix, pull raw sensor data for misclassifications, and identify what additional training data you need — all in one conversation instead of a half-day manual investigation.
+**Edge AI development loop.** Deploy a model to a dev board with Edge Impulse, then use an LLM of your choice to run inference batches across 50 test samples, generate a confusion matrix, pull raw sensor data for misclassifications, and identify what additional training data you need — all in one conversation instead of a half-day manual investigation.
 
 **Small-scale industrial monitoring.** A brewery with 6 fermentation tanks and a glycol chiller. A machine shop with vibration sensors on 4 presses. A research lab with 20 environmental monitors. Too small for Azure IoT Hub, too important for a spreadsheet. The LLM correlates across devices, interprets drift patterns, and catches the stuck sensor you wouldn't notice on a dashboard for days.
 
