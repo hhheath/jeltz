@@ -94,6 +94,7 @@ class JeltzServer:
         if self._aggregator:
             result = await self._aggregator.call_tool(name, args)
             if result.success:
+                await self._maybe_record(name, result.data)
                 data = {"data": result.data}
                 return CallToolResult(
                     content=[TextContent(type="text", text=str(data))],
@@ -109,6 +110,45 @@ class JeltzServer:
             content=[TextContent(type="text", text=f"unknown tool: {name}")],
             isError=True,
         )
+
+    # Types that can be stored as float in the time-series store
+    _NUMERIC_TYPES = {"float", "number", "int", "integer"}
+
+    async def _maybe_record(self, tool_name: str, raw_data: Any) -> None:
+        """Record a sensor reading to the store if the tool returns a numeric type.
+
+        Best-effort — failures are logged, never raised. The tool call
+        has already succeeded; storage is a side effect.
+        """
+        if not self._store or not self._aggregator:
+            return
+
+        route = self._aggregator.get_route(tool_name)
+        if not route or not route.returns:
+            return
+
+        if route.returns.type not in self._NUMERIC_TYPES:
+            return
+
+        try:
+            value = float(raw_data)
+        except (TypeError, ValueError):
+            logger.debug(
+                "skipping store for %s: cannot convert %r to float",
+                tool_name, raw_data,
+            )
+            return
+
+        unit = route.returns.unit or ""
+        try:
+            await self._store.record(
+                device_id=route.device.name,
+                sensor_id=route.tool_name,
+                value=value,
+                unit=unit,
+            )
+        except Exception:
+            logger.warning("failed to record reading for %s", tool_name, exc_info=True)
 
     async def start(self) -> DiscoveryResult:
         """Initialize store, discover devices, connect adapters.

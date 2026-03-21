@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from jeltz.adapters.mock import MockAdapter
 from jeltz.gateway.server import JeltzServer
 
 
@@ -250,3 +251,132 @@ class TestDeviceToolDispatch:
         result = await server.aggregator.call_tool("nonexistent.tool", {})
         assert not result.success
         assert "unknown tool" in result.error
+
+
+class TestStoreOnRead:
+    """Device tool calls should record numeric readings to the store."""
+
+    @pytest.fixture
+    def responsive_profiles_dir(self, tmp_path: Path) -> Path:
+        (tmp_path / "temp.toml").write_text(
+            '[device]\n'
+            'name = "temp_sensor"\n'
+            '[connection]\nprotocol = "mock"\n'
+            '[[tools]]\n'
+            'name = "get_reading"\n'
+            'description = "Get temperature"\n'
+            'command = "READ_TEMP"\n'
+            '[tools.returns]\ntype = "float"\nunit = "celsius"\n'
+            '[[tools]]\n'
+            'name = "get_status"\n'
+            'description = "Get status"\n'
+            'command = "STATUS"\n'
+            '[tools.returns]\ntype = "string"\n'
+        )
+        return tmp_path
+
+    @pytest.fixture
+    async def responsive_server(self, responsive_profiles_dir: Path):
+        srv = JeltzServer(
+            profiles_dir=responsive_profiles_dir, db_path=":memory:"
+        )
+        discovery = await srv.start()
+        for device in discovery.devices:
+            if isinstance(device.adapter, MockAdapter):
+                device.adapter.responses = {
+                    "READ_TEMP": "22.5",
+                    "STATUS": "OK",
+                }
+        yield srv
+        await srv.stop()
+
+    async def test_numeric_tool_records_to_store(
+        self, responsive_server: JeltzServer
+    ) -> None:
+        result = await responsive_server.handle_call_tool(
+            "temp_sensor.get_reading", {}
+        )
+        assert result.isError is not True
+
+        assert responsive_server.store is not None
+        latest = await responsive_server.store.get_latest(
+            "temp_sensor", "get_reading"
+        )
+        assert latest is not None
+        assert latest.value == 22.5
+        assert latest.unit == "celsius"
+
+    async def test_string_tool_does_not_record(
+        self, responsive_server: JeltzServer
+    ) -> None:
+        result = await responsive_server.handle_call_tool(
+            "temp_sensor.get_status", {}
+        )
+        assert result.isError is not True
+
+        assert responsive_server.store is not None
+        latest = await responsive_server.store.get_latest(
+            "temp_sensor", "get_status"
+        )
+        assert latest is None
+
+    async def test_stored_readings_visible_via_fleet(
+        self, responsive_server: JeltzServer
+    ) -> None:
+        # Call the device tool — should auto-record
+        await responsive_server.handle_call_tool(
+            "temp_sensor.get_reading", {}
+        )
+
+        # Fleet should see the reading
+        result = await responsive_server.handle_call_tool(
+            "fleet.get_all_readings", {}
+        )
+        assert result.isError is not True
+        assert result.structuredContent is not None
+        assert result.structuredContent["count"] == 1
+
+    async def test_multiple_reads_build_history(
+        self, responsive_server: JeltzServer
+    ) -> None:
+        for _ in range(3):
+            await responsive_server.handle_call_tool(
+                "temp_sensor.get_reading", {}
+            )
+
+        result = await responsive_server.handle_call_tool(
+            "fleet.get_history",
+            {"device_id": "temp_sensor", "sensor_id": "get_reading", "hours": 1},
+        )
+        assert result.structuredContent is not None
+        assert result.structuredContent["count"] == 3
+
+    async def test_failed_tool_call_does_not_record(
+        self, responsive_server: JeltzServer
+    ) -> None:
+        # Call a tool that will fail (unknown command on mock)
+        result = await responsive_server.handle_call_tool(
+            "temp_sensor.get_reading", {}
+        )
+        # First call succeeds and records
+        assert result.isError is not True
+
+        # Now break the adapter
+        assert responsive_server.aggregator is not None
+        device = responsive_server.aggregator.get_status("temp_sensor")
+        assert device is not None
+        adapter = device.device.adapter
+        assert isinstance(adapter, MockAdapter)
+        adapter.responses = {}  # Remove all responses
+
+        result = await responsive_server.handle_call_tool(
+            "temp_sensor.get_reading", {}
+        )
+        assert result.isError is True
+
+        # Should still only have 1 reading (from the first call)
+        assert responsive_server.store is not None
+        readings = await responsive_server.store.get_history(
+            "temp_sensor", "get_reading", start=0
+        )
+        assert len(readings) == 1

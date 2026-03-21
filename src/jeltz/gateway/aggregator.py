@@ -9,6 +9,7 @@ from typing import Any
 from mcp.types import Tool
 
 from jeltz.adapters.base import AdapterResult
+from jeltz.devices.model import ToolReturns
 from jeltz.gateway.discovery import DiscoveredDevice
 from jeltz.profiles.generator import generate_tools
 
@@ -30,6 +31,7 @@ class ToolRoute:
     device: DiscoveredDevice
     tool_name: str  # original un-namespaced name
     command: str | None  # the command string to send over the adapter
+    returns: ToolReturns | None = None  # return type spec for storage
 
 
 class Aggregator:
@@ -77,6 +79,7 @@ class Aggregator:
                     device=device,
                     tool_name=tool_def.name,
                     command=tool_def.command,
+                    returns=tool_def.returns,
                 )
 
     @property
@@ -87,6 +90,9 @@ class Aggregator:
     @property
     def device_names(self) -> list[str]:
         return list(self._devices.keys())
+
+    def get_route(self, namespaced_name: str) -> ToolRoute | None:
+        return self._routes.get(namespaced_name)
 
     def get_status(self, device_name: str) -> DeviceStatus | None:
         return self._status.get(device_name)
