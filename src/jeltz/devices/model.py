@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+ParamType = Literal[
+    "int", "integer", "float", "number",
+    "str", "string", "bool", "boolean",
+    "array", "object",
+]
 
 
 class ConnectionConfig(BaseModel):
@@ -21,7 +27,7 @@ class ConnectionConfig(BaseModel):
 class ToolParam(BaseModel):
     """A single parameter for a device tool."""
 
-    type: str
+    type: ParamType
     description: str | None = None
     min: float | None = None
     max: float | None = None
@@ -38,7 +44,7 @@ class ToolParam(BaseModel):
 class ToolReturns(BaseModel):
     """Return type specification for a device tool."""
 
-    type: str
+    type: ParamType
     unit: str | None = None
 
 
