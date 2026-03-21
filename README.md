@@ -138,6 +138,10 @@ Requires Python 3.11+.
 
 ## Quickstart
 
+For a full walkthrough (wiring, firmware, MCP client setup), see the **[Getting Started guide](docs/getting-started.md)**.
+
+Quick version:
+
 ```bash
 # Copy a built-in profile into your working directory
 mkdir profiles
