@@ -91,6 +91,11 @@ class Aggregator:
     def device_names(self) -> list[str]:
         return list(self._devices.keys())
 
+    @property
+    def route_names(self) -> list[str]:
+        """All namespaced tool names in the routing table."""
+        return list(self._routes.keys())
+
     def get_route(self, namespaced_name: str) -> ToolRoute | None:
         return self._routes.get(namespaced_name)
 

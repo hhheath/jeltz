@@ -3,21 +3,33 @@
 Connects discovery, aggregator, fleet tools, and storage behind a single
 MCP server. Clients see one flat tool catalog: namespaced device tools
 plus fleet-level tools.
+
+Supports two modes:
+- **stdio**: Ephemeral — one MCP client owns the process (``jeltz start``)
+- **daemon**: Long-running — background recording + SSE endpoint (``jeltz daemon``)
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
 
 from mcp.server.lowlevel import Server
+from mcp.server.sse import SseServerTransport
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Mount, Route
 
 from jeltz.gateway.aggregator import Aggregator
 from jeltz.gateway.discovery import DiscoveryResult, discover_profiles
 from jeltz.gateway.fleet import FleetTools
+from jeltz.gateway.recorder import run_recorder
+from jeltz.storage.retention import run_cleanup
 from jeltz.storage.store import ReadingStore
 
 logger = logging.getLogger(__name__)
@@ -212,6 +224,110 @@ class JeltzServer:
             await self.start()
             await self.serve_stdio()
         finally:
+            await self.stop()
+
+    # ------------------------------------------------------------------
+    # Daemon mode: background recording + SSE transport
+    # ------------------------------------------------------------------
+
+    async def _run_retention_loop(
+        self, stop_event: asyncio.Event, interval_hours: float = 6.0
+    ) -> None:
+        """Run retention cleanup on startup and periodically."""
+        if not self._store:
+            return
+        while not stop_event.is_set():
+            try:
+                counts = await run_cleanup(self._store)
+                if counts["downsampled"] or counts["purged"]:
+                    logger.info(
+                        "retention: downsampled %d, purged %d",
+                        counts["downsampled"], counts["purged"],
+                    )
+            except Exception:
+                logger.warning("retention cleanup failed", exc_info=True)
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(), timeout=interval_hours * 3600
+                )
+                break
+            except asyncio.TimeoutError:
+                pass
+
+    def _build_sse_app(self) -> tuple[Starlette, SseServerTransport]:
+        """Build a Starlette ASGI app that serves MCP over SSE."""
+        sse_transport = SseServerTransport("/messages/")
+        mcp_server = self._server
+
+        async def handle_sse(request: Request) -> Response:
+            async with sse_transport.connect_sse(
+                request.scope, request.receive, request._send
+            ) as streams:
+                await mcp_server.run(
+                    streams[0], streams[1], mcp_server.create_initialization_options()
+                )
+            return Response()
+
+        app = Starlette(
+            routes=[
+                Route("/sse", endpoint=handle_sse, methods=["GET"]),
+                Mount("/messages/", app=sse_transport.handle_post_message),
+            ],
+        )
+        return app, sse_transport
+
+    async def serve_sse(self, host: str = "127.0.0.1", port: int = 8374) -> None:
+        """Serve MCP over SSE transport. Call start() first.
+
+        Runs a Starlette/uvicorn HTTP server. Clients connect to GET /sse
+        and post messages to /messages/.
+        """
+        import uvicorn
+
+        if self._store is None:
+            raise RuntimeError("server not started — call start() first")
+
+        app, _ = self._build_sse_app()
+        config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+        server = uvicorn.Server(config)
+        await server.serve()
+
+    async def run_daemon(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8374,
+    ) -> None:
+        """Start the server in daemon mode: background recording + SSE endpoint.
+
+        Runs until interrupted. Continuously polls sensors and records readings
+        to the store. MCP clients connect/disconnect over SSE without affecting
+        the recording loop.
+        """
+        import uvicorn
+
+        stop_event = asyncio.Event()
+
+        try:
+            await self.start()
+        except Exception:
+            await self.stop()
+            raise
+
+        if not self._aggregator or not self._store:
+            raise RuntimeError("server failed to initialize")
+
+        app, _ = self._build_sse_app()
+        config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+        sse_server = uvicorn.Server(config)
+
+        try:
+            await asyncio.gather(
+                run_recorder(self._aggregator, self._store, stop_event),
+                self._run_retention_loop(stop_event),
+                sse_server.serve(),
+            )
+        finally:
+            stop_event.set()
             await self.stop()
 
     @property

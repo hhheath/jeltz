@@ -66,6 +66,16 @@ class HealthConfig(BaseModel):
     interval_ms: int = 10000
 
 
+class RecordingConfig(BaseModel):
+    """Controls background recording when running in daemon mode."""
+
+    poll_interval_ms: int = Field(default=5000, ge=100)
+    """How often to poll this device's sensors (milliseconds). Default 5s."""
+
+    enabled: bool = True
+    """Set to false to disable background recording for this device."""
+
+
 class DeviceConfig(BaseModel):
     """Top-level device metadata."""
 
@@ -81,3 +91,4 @@ class DeviceModel(BaseModel):
     connection: ConnectionConfig
     tools: list[ToolDefinition] = Field(default_factory=list)
     health: HealthConfig | None = None
+    recording: RecordingConfig = Field(default_factory=RecordingConfig)
