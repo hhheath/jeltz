@@ -18,7 +18,12 @@ from typing import Any
 
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, TextContent, Tool
+from mcp.types import CallToolResult, ServerCapabilities, TextContent, Tool
+
+try:
+    from mcp.server import InitializationOptions
+except ImportError:
+    InitializationOptions = None  # type: ignore[assignment,misc]
 
 from jeltz.gateway.aggregator import Aggregator
 from jeltz.gateway.discovery import DiscoveryResult, discover_profiles
@@ -215,7 +220,17 @@ class JeltzServer:
         if self._store is None:
             raise RuntimeError("server not started — call start() first")
         async with stdio_server() as (read_stream, write_stream):
-            await self._server.run(read_stream, write_stream)
+            if InitializationOptions is not None:
+                init_options = InitializationOptions(
+                    server_name="jeltz",
+                    server_version="0.1.0",
+                    capabilities=ServerCapabilities(tools={}),
+                )
+                await self._server.run(
+                    read_stream, write_stream, init_options
+                )
+            else:
+                await self._server.run(read_stream, write_stream)
 
     async def run_stdio(self) -> None:
         """Start the server and run over stdio transport."""

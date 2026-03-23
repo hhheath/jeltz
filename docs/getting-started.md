@@ -123,20 +123,9 @@ Note your port — you'll need it in the next step.
 
 ## 5. Set up the profile
 
-Copy the built-in serial sensor profile and edit the port:
-
-```bash
-mkdir -p profiles
-cp jeltz/profiles/serial_sensor.toml profiles/my_sensor.toml
-```
-
-Edit `profiles/my_sensor.toml` — change the `port` to match your device:
+The repo already has a `profiles/` directory with built-in profiles. Edit `profiles/serial_sensor.toml` and set the `port` to match your device:
 
 ```toml
-[device]
-name = "my_sensor"
-description = "ESP32 with DHT22 on my desk"
-
 [connection]
 protocol = "serial"
 port = "/dev/cu.usbserial-0001"  # ← your port here
@@ -149,13 +138,13 @@ The rest of the profile (tools, health check) matches the firmware you just flas
 ## 6. Test the connection
 
 ```bash
-jeltz test profiles/my_sensor.toml
+jeltz test profiles/serial_sensor.toml
 ```
 
 You should see:
 
 ```
-Device:   my_sensor
+Device:   serial_sensor
 Protocol: serial
 Tools:    4
 ✓ Connected
@@ -178,8 +167,8 @@ jeltz status -p profiles
 ```
 Devices (1):
 
-  ✓ my_sensor [serial] — healthy
-    tools: my_sensor.get_temperature, my_sensor.get_humidity, my_sensor.get_reading, my_sensor.get_status
+  ✓ serial_sensor [serial] — healthy
+    tools: serial_sensor.get_temperature, serial_sensor.get_humidity, serial_sensor.get_reading, serial_sensor.get_status
 ```
 
 ## 8. Start the gateway
@@ -190,9 +179,11 @@ jeltz start -p profiles
 
 ```
 ✓ Discovered 1 device(s), exposing 8 tools
-  ✓ my_sensor
+  ✓ serial_sensor
 ✓ MCP server ready on stdio
 ```
+
+> **Note:** If you haven't removed or edited the other built-in profiles (`mqtt_sensor.toml`, `mock_sensor.toml`), the gateway will try to load them too. The mock profile will connect fine; the MQTT profile will show a connection error if you don't have a broker running. To load only your serial device, pass the profile directly: `jeltz start -p profiles/serial_sensor.toml`
 
 The gateway is now running. It serves MCP tools over stdio — which means an MCP client can connect to it by running the `jeltz start` command as a subprocess.
 
@@ -277,15 +268,15 @@ Once connected, try these prompts:
 
 > **"What's the temperature right now?"**
 >
-> The LLM calls `my_sensor.get_temperature` and tells you the reading.
+> The LLM calls `serial_sensor.get_temperature` and tells you the reading.
 
 > **"What's the temperature and humidity?"**
 >
-> The LLM calls both tools (or `my_sensor.get_reading`) and reports both values.
+> The LLM calls both tools (or `serial_sensor.get_reading`) and reports both values.
 
 > **"Is the sensor working correctly?"**
 >
-> The LLM calls `my_sensor.get_status` and interprets the result.
+> The LLM calls `serial_sensor.get_status` and interprets the result.
 
 > **"Check if anything looks unusual."**
 >
@@ -299,13 +290,20 @@ Every time a numeric tool is called, the reading is automatically stored in Jelt
 
 You can try Jeltz without any physical devices using the built-in mock profile. It simulates a temperature + humidity sensor with realistic canned responses.
 
+First, test the mock profile:
+
 ```bash
-mkdir -p profiles
-cp jeltz/profiles/mock_sensor.toml profiles/
 jeltz test profiles/mock_sensor.toml
-jeltz status -p profiles
-jeltz start -p profiles
 ```
+
+To start the gateway with only the mock device (avoiding connection errors from the serial/MQTT profiles), copy it into its own directory:
+
+```bash
+mkdir -p my_profiles
+cp profiles/mock_sensor.toml my_profiles/
+jeltz start -p my_profiles
+```
+
 
 The mock adapter connects instantly, passes health checks, and returns realistic values when tools are called (22.5°C, 47.3% humidity). You can customize the responses by editing the `[connection.mock_responses]` section in the profile:
 
