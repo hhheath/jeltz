@@ -24,10 +24,10 @@ jeltz/
 │   │   └── validator.py   # Profile validation
 │   ├── adapters/
 │   │   ├── base.py        # BaseAdapter ABC
-│   │   ├── serial.py      # pyserial
+│   │   ├── serial.py      # pyserial (direct-connect prototyping)
 │   │   ├── mqtt.py        # paho-mqtt
-│   │   ├── usb.py         # USB
-│   │   ├── http.py        # HTTP/REST
+│   │   ├── modbus.py      # Modbus RTU/TCP via pymodbus (Phase 2)
+│   │   ├── opcua.py       # OPC-UA via asyncua (Phase 2)
 │   │   └── mock.py        # Mock for testing
 │   ├── devices/
 │   │   ├── model.py       # Internal device representation
@@ -47,11 +47,11 @@ jeltz/
 
 **Phase 1 — MVP (6-8 weeks):** TOML profile schema with Python handler escape hatches, serial + MQTT + mock adapters, SQLite time-series storage layer, MCP server generator, gateway aggregator with fleet-level tools, device discovery and health checks, CLI, 10-15 built-in profiles for common sensors.
 
-**Phase 2:** `jeltz-arduino` C++ library (separate repo), USB adapter, community profile repository, device namespacing.
+**Phase 2 — Industrial protocols:** Modbus RTU/TCP adapter (via `pymodbus`), OPC-UA adapter (via `asyncua`), community profile repository, device namespacing, actuator safety controls. These are the standard protocols for communicating with PLCs, RTUs, and industrial gateways — the devices that already aggregate serial sensors on the factory floor.
 
-**Phase 3:** Edge Impulse MCP server federation, local LLM integration, web dashboard, alert system, event streaming.
+**Phase 3:** BLE adapter, CAN bus adapter, `jeltz-arduino` C++ library (separate repo), USB adapter, Edge Impulse MCP server federation, event streaming.
 
-**Phase 4:** Modbus/BLE/CAN bus adapters, IQ9 reference deployment, additional ML platform integrations.
+**Phase 4:** Local LLM integration, web dashboard, alert system, IQ9 reference deployment, additional ML platform integrations.
 
 ## System overview
 
@@ -119,12 +119,16 @@ class BaseAdapter(ABC):
 
 **Built-in adapters:**
 
-- `SerialAdapter` — UART/serial via pyserial-asyncio. Handles baud rate, parity, flow control, reconnection.
-- `MQTTAdapter` — MQTT pub/sub via paho-mqtt (async wrapper). Handles topics, QoS, retained messages.
-- `HTTPAdapter` — REST APIs on the local network. For devices that expose an HTTP endpoint (e.g., ESP32 with a web server).
+- `SerialAdapter` — UART/serial via pyserial-asyncio. Handles baud rate, parity, flow control, reconnection. Best suited for direct-connect prototyping and lab setups. In industrial environments, serial sensors typically connect to PLCs/RTUs — use the Modbus or OPC-UA adapter to talk to those instead.
+- `MQTTAdapter` — MQTT pub/sub via paho-mqtt (async wrapper). Handles topics, QoS, retained messages. Common in IIoT greenfield deployments where devices publish to a broker.
 - `MockAdapter` — Simulated device for testing. Returns configurable responses. This is a first-class adapter, not an afterthought — it enables development and CI without physical hardware.
 
-**Plugin architecture:** To add a new protocol (Modbus, BLE, CAN bus), implement `BaseAdapter` and register it in the adapter registry. The profile's `connection.protocol` field maps to the adapter. No changes to the gateway, parser, or anything else.
+**Phase 2 adapters (industrial protocols):**
+
+- `ModbusAdapter` — Modbus RTU (serial) and Modbus TCP via `pymodbus`. The lingua franca of industrial automation. Talks to PLCs, RTUs, VFDs, power meters, and most industrial sensors. This is how Jeltz connects to brownfield industrial environments where devices are already wired into Modbus networks.
+- `OPCUAAdapter` — OPC-UA client via `asyncua`. The modern standard for industrial interoperability. Talks to SCADA systems, DCS controllers, and OPC-UA-enabled PLCs (Siemens, Beckhoff, etc.). Supports browsing server address spaces and subscribing to node value changes.
+
+**Plugin architecture:** To add a new protocol (BLE, CAN bus, PROFINET), implement `BaseAdapter` and register it in the adapter registry. The profile's `connection.protocol` field maps to the adapter. No changes to the gateway, parser, or anything else.
 
 **Error handling:** Adapters never raise raw exceptions to the gateway. Every method returns an `AdapterResult` that wraps success/failure with structured error context. The gateway decides how to surface errors to the MCP client (retry, report, degrade gracefully).
 
@@ -212,9 +216,10 @@ readings table:
 These are deliberate omissions, not oversights:
 
 - **Authentication on the MCP endpoint.** The gateway binds to localhost by default. Network-exposed deployments need auth — this is a known gap, documented, and planned for v2.
-- **Web dashboard.** Phase 3. The CLI provides all monitoring for v1.
-- **Local LLM integration.** Phase 3. Jeltz works with any MCP client — Claude Desktop, Cursor, Claude Code. Adding llama.cpp as a built-in client is an enhancement, not a core feature.
-- **The `jeltz-arduino` library.** Phase 2. It's a separate repo with a separate language (C++) and a separate distribution channel (Arduino Library Manager / PlatformIO). v1 is profile-driven only.
+- **Industrial protocol adapters (Modbus, OPC-UA).** Phase 2, and the highest priority after v1. In real industrial environments, serial sensors connect to PLCs and RTUs — not directly to a gateway. Modbus RTU/TCP and OPC-UA are how Jeltz will talk to those existing systems. Serial and MQTT cover prototyping and IIoT greenfield; Modbus and OPC-UA cover brownfield.
+- **Web dashboard.** Phase 4. The CLI provides all monitoring for v1.
+- **Local LLM integration.** Phase 4. Jeltz works with any MCP client — Claude Desktop, Cursor, Claude Code. Adding llama.cpp as a built-in client is an enhancement, not a core feature.
+- **The `jeltz-arduino` library.** Phase 3. It's a separate repo with a separate language (C++) and a separate distribution channel (Arduino Library Manager / PlatformIO). v1 is profile-driven only.
 - **Actuator safety controls.** If a profile defines a tool that triggers a relay or motor, there's no confirmation step or safety interlock in v1. This is documented as a warning. Phase 2 adds configurable confirmation requirements for write/actuate tools.
 - **Profile registry / package manager.** Phase 2. For v1, profiles are files in a directory. Community sharing is via Git.
 
