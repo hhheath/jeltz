@@ -264,42 +264,28 @@ Every time a numeric tool is called, the reading is automatically stored in Jelt
 
 ## Testing without hardware
 
-You can try Jeltz without any physical devices using the mock adapter.
-
-Create a mock profile:
+You can try Jeltz without any physical devices using the built-in mock profile. It simulates a temperature + humidity sensor with realistic canned responses.
 
 ```bash
 mkdir -p profiles
-cat > profiles/mock_sensor.toml << 'EOF'
-[device]
-name = "mock_sensor"
-description = "Simulated sensor for testing"
-
-[connection]
-protocol = "mock"
-
-[[tools]]
-name = "get_temperature"
-description = "Get simulated temperature"
-command = "READ_TEMP"
-
-[tools.returns]
-type = "float"
-unit = "celsius"
-
-[health]
-check_command = "PING"
-expected = "PONG"
-interval_ms = 10000
-EOF
-```
-
-```bash
+cp jeltz/profiles/mock_sensor.toml profiles/
 jeltz test profiles/mock_sensor.toml
 jeltz status -p profiles
+jeltz start -p profiles
 ```
 
-The mock adapter connects instantly and passes health checks. Tool calls return mock responses. This is useful for testing your MCP client integration before hardware arrives.
+The mock adapter connects instantly, passes health checks, and returns realistic values when tools are called (22.5°C, 47.3% humidity). You can customize the responses by editing the `[connection.mock_responses]` section in the profile:
+
+```toml
+[connection.mock_responses]
+READ_TEMP = "22.5"
+READ_HUMID = "47.3"
+READ_ALL = "22.5,47.3"
+STATUS = "OK"
+PING = "PONG"
+```
+
+This is useful for testing your MCP client integration before hardware arrives, or for demoing Jeltz's fleet tools without a physical setup.
 
 ---
 
