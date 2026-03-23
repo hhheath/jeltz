@@ -1,6 +1,6 @@
 # Jeltz
 
-> **Status: Phase 1 complete.** Gateway core, CLI, serial + MQTT adapters, fleet-level tools, SQLite time-series storage, auto-recording of sensor readings, and built-in profiles — all working. 284 tests passing. See the [Getting Started guide](docs/getting-started.md) to try it.
+> **Status: Phase 1 complete.** Gateway core, CLI, serial + MQTT adapters, fleet-level tools, SQLite time-series storage, daemon mode with background recording, and built-in profiles — all working. 294 tests passing. See the [Getting Started guide](docs/getting-started.md) to try it.
 
 **Your sensors will be processed.**
 
@@ -162,6 +162,7 @@ jeltz start -p profiles
 
 Then add Jeltz to your MCP client. For Claude Desktop or Claude Code:
 
+**Stdio mode** (client manages the process):
 ```json
 {
   "mcpServers": {
@@ -173,13 +174,44 @@ Then add Jeltz to your MCP client. For Claude Desktop or Claude Code:
 }
 ```
 
+**Daemon mode** (connect to a running `jeltz daemon`):
+```json
+{
+  "mcpServers": {
+    "jeltz": {
+      "url": "http://localhost:8374/mcp"
+    }
+  }
+}
+```
+
 ## CLI
 
 ```bash
 jeltz start -p profiles      # Start the MCP gateway (stdio transport)
+jeltz daemon -p profiles     # Long-running daemon: background recording + HTTP
 jeltz status -p profiles     # Show connected devices and health
 jeltz test <profile.toml>    # Test a single device connection
 jeltz add-device <file.toml> # Validate and copy a profile into profiles/
+```
+
+### `start` vs `daemon`
+
+**`jeltz start`** runs as a subprocess of your MCP client (Claude Desktop, Claude Code, etc.). The client manages the process lifecycle — when the client disconnects, the gateway stops. Good for development and single-client setups.
+
+**`jeltz daemon`** runs as a long-lived process. It continuously polls sensors and records readings to the SQLite store, runs periodic retention cleanup, and serves MCP over [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) so clients can connect and disconnect without affecting the recording loop. Use this when you want always-on monitoring with persistent history.
+
+```bash
+jeltz daemon -p profiles --host 0.0.0.0 --port 8374
+```
+
+```
+✓ Discovered 3 device(s), exposing 15 tools
+  ✓ serial_sensor
+  ✓ mqtt_sensor
+  ✓ pressure_line
+✓ Background recording active
+✓ MCP server ready on http://0.0.0.0:8374/mcp
 ```
 
 ## Use cases
@@ -196,7 +228,7 @@ jeltz add-device <file.toml> # Validate and copy a profile into profiles/
 
 ## Roadmap
 
-- **Phase 1 (complete):** ~~Core framework~~ ✓, ~~serial adapter~~ ✓, ~~MQTT adapter~~ ✓, ~~SQLite time-series storage~~ ✓, ~~fleet-level tools~~ ✓, ~~CLI~~ ✓, ~~built-in profiles~~ ✓, ~~mock adapter~~ ✓
+- **Phase 1 (complete):** ~~Core framework~~ ✓, ~~serial adapter~~ ✓, ~~MQTT adapter~~ ✓, ~~SQLite time-series storage~~ ✓, ~~fleet-level tools~~ ✓, ~~CLI~~ ✓, ~~built-in profiles~~ ✓, ~~mock adapter~~ ✓, ~~daemon mode~~ ✓
 - **Phase 2:** Modbus RTU/TCP adapter, OPC-UA adapter, community profile repository, device namespacing, actuator safety controls
 - **Phase 3:** BLE adapter, CAN bus adapter, `jeltz-arduino` C++ library, USB adapter, Edge Impulse integration, event streaming
 - **Phase 4:** Local LLM integration, web dashboard, alert system, IQ9 reference deployment, additional ML platform integrations
@@ -210,7 +242,7 @@ jeltz add-device <file.toml> # Validate and copy a profile into profiles/
 ## Development
 
 ```bash
-hatch run test        # Run tests (284 tests, mock adapter, no hardware needed)
+hatch run test        # Run tests (294 tests, mock adapter, no hardware needed)
 hatch run lint        # Ruff linter
 hatch run typecheck   # Mypy strict mode
 ```

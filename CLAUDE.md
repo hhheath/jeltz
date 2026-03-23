@@ -12,12 +12,13 @@ Python 3.11+, `mcp` SDK, `pyserial`, `paho-mqtt`, `tomllib`, `click`, `pydantic`
 
 ```bash
 # Development
-hatch run test       # Run test suite (252 tests, mock adapter, no hardware needed)
+hatch run test       # Run test suite (294 tests, mock adapter, no hardware needed)
 hatch run lint       # Ruff linter
 hatch run typecheck  # Mypy
 
 # CLI (all working)
 jeltz start -p profiles      # Start MCP gateway (stdio transport)
+jeltz daemon -p profiles     # Long-running daemon: background recording + HTTP
 jeltz status -p profiles     # Show connected devices and health
 jeltz test <profile.toml>    # Test a single device connection
 jeltz add-device <file.toml> # Validate and copy a profile into profiles/
