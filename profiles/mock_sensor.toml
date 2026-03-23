@@ -1,0 +1,65 @@
+# Mock Sensor — simulated device for end-to-end testing without hardware
+#
+# This profile uses the mock adapter with canned responses. Run it with:
+#
+#   jeltz start -p profiles
+#
+# Then connect any MCP client. The mock device responds to the same
+# commands as the serial_sensor profile, but returns fixed values
+# instead of talking to real hardware.
+
+[device]
+name = "mock_sensor"
+description = "Simulated temperature + humidity sensor for testing"
+
+[connection]
+protocol = "mock"
+timeout_ms = 1000
+
+# Canned responses: command → response value.
+# The mock adapter looks up the command string here and returns the value.
+[connection.mock_responses]
+READ_TEMP = "22.5"
+READ_HUMID = "47.3"
+READ_ALL = "22.5,47.3"
+STATUS = "OK"
+PING = "PONG"
+
+[[tools]]
+name = "get_temperature"
+description = "Get current temperature reading"
+command = "READ_TEMP"
+
+[tools.returns]
+type = "float"
+unit = "celsius"
+
+[[tools]]
+name = "get_humidity"
+description = "Get current relative humidity reading"
+command = "READ_HUMID"
+
+[tools.returns]
+type = "float"
+unit = "percent"
+
+[[tools]]
+name = "get_reading"
+description = "Get both temperature (celsius) and humidity (percent) in one call"
+command = "READ_ALL"
+
+[tools.returns]
+type = "string"
+
+[[tools]]
+name = "get_status"
+description = "Check if the sensor is operating normally"
+command = "STATUS"
+
+[tools.returns]
+type = "string"
+
+[health]
+check_command = "PING"
+expected = "PONG"
+interval_ms = 10000

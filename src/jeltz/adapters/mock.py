@@ -10,7 +10,12 @@ from jeltz.devices.model import ConnectionConfig
 
 
 class MockAdapter(BaseAdapter):
-    """Simulated device adapter. Maps commands to canned responses."""
+    """Simulated device adapter. Maps commands to canned responses.
+
+    Responses can be provided programmatically (via the ``responses`` kwarg)
+    or declaratively in a TOML profile under ``[connection.mock_responses]``.
+    Programmatic responses take precedence over profile responses.
+    """
 
     def __init__(
         self,
@@ -20,7 +25,12 @@ class MockAdapter(BaseAdapter):
         delay_ms: float = 0,
     ) -> None:
         super().__init__(config)
-        self.responses: dict[str, Any] = responses or {}
+        # Start with profile-defined responses, overlay programmatic ones.
+        profile_responses: dict[str, Any] = {}
+        raw = getattr(config, "mock_responses", None)
+        if raw and isinstance(raw, dict):
+            profile_responses = {k: str(v) for k, v in raw.items()}
+        self.responses: dict[str, Any] = {**profile_responses, **(responses or {})}
         self.healthy = healthy
         self.delay_ms = delay_ms
         self.connected = False

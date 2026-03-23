@@ -197,9 +197,9 @@ jeltz add-device <file.toml> # Validate and copy a profile into profiles/
 ## Roadmap
 
 - **Phase 1 (complete):** ~~Core framework~~ ✓, ~~serial adapter~~ ✓, ~~MQTT adapter~~ ✓, ~~SQLite time-series storage~~ ✓, ~~fleet-level tools~~ ✓, ~~CLI~~ ✓, ~~built-in profiles~~ ✓, ~~mock adapter~~ ✓
-- **Phase 2:** `jeltz-arduino` C++ library, USB adapter, community profile repository, device namespacing
-- **Phase 3:** Edge Impulse integration, local LLM integration, web dashboard, alert system, event streaming
-- **Phase 4:** Additional protocol adapters (Modbus, BLE, CAN bus), IQ9 reference deployment, additional ML platform integrations
+- **Phase 2:** Modbus RTU/TCP adapter, OPC-UA adapter, community profile repository, device namespacing, actuator safety controls
+- **Phase 3:** BLE adapter, CAN bus adapter, `jeltz-arduino` C++ library, USB adapter, Edge Impulse integration, event streaming
+- **Phase 4:** Local LLM integration, web dashboard, alert system, IQ9 reference deployment, additional ML platform integrations
 
 ## Documentation
 
