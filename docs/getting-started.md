@@ -199,7 +199,7 @@ jeltz daemon -p profiles --host 127.0.0.1 --port 8374
 
 ```
 ✓ Discovered 1 device(s), exposing 8 tools
-  ✓ my_sensor
+  ✓ serial_sensor
 ✓ Background recording active
 ✓ MCP server ready on http://127.0.0.1:8374/mcp
 ```

@@ -117,12 +117,13 @@ The `jeltz-arduino` C++ library will let devices self-describe to the gateway �
 
 ## Built-in profiles
 
-Jeltz ships with profiles for common setups. Each includes wiring diagrams and complete firmware examples you can flash:
+Jeltz ships with profiles for common setups. Each includes complete firmware examples you can flash:
 
 | Profile | Protocol | Description |
 |---------|----------|-------------|
 | [`serial_sensor`](profiles/serial_sensor.toml) | Serial | Any microcontroller with a text command protocol over USB serial |
 | [`mqtt_sensor`](profiles/mqtt_sensor.toml) | MQTT | Any WiFi device publishing sensor data over MQTT |
+| [`mock_sensor`](profiles/mock_sensor.toml) | Mock | Simulated sensor for testing and development without hardware |
 
 These profiles use temperature + humidity as an example, but the commands and return types are easily adapted to any sensor.
 
@@ -143,12 +144,9 @@ For a full walkthrough (wiring, firmware, MCP client setup), see the **[Getting 
 Quick version:
 
 ```bash
-# Copy a built-in profile into your working directory
-mkdir profiles
-cp jeltz/profiles/serial_sensor.toml profiles/
-
-# Edit the profile — set your serial port, adjust commands if needed
+# Edit the built-in serial profile — set your serial port, adjust commands if needed
 # (or use it as-is with the example firmware from the profile comments)
+vim profiles/serial_sensor.toml
 
 # Test the device connection
 jeltz test profiles/serial_sensor.toml
