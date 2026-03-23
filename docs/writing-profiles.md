@@ -6,13 +6,14 @@ This guide covers every field in the profile schema, with examples.
 
 ## Profile anatomy
 
-Every profile has four sections:
+Every profile has these sections:
 
 ```toml
 [device]         # What is this device?
 [connection]     # How do I connect to it?
 [[tools]]        # What can I ask it to do?
 [health]         # How do I check if it's alive? (optional)
+[recording]      # Background recording config (optional, daemon mode)
 ```
 
 ## `[device]` — metadata
@@ -169,6 +170,25 @@ description = "Get data"
 # Good — the LLM knows this is temperature, from a specific place
 description = "Get current temperature from the glycol chiller return line"
 ```
+
+## `[recording]` — background recording (optional)
+
+Controls how this device is polled by the background recorder in daemon mode (`jeltz daemon`). If omitted, defaults are used.
+
+```toml
+[recording]
+enabled = true
+poll_interval_ms = 5000
+```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `enabled` | no | `true` | Set to `false` to exclude this device from background recording |
+| `poll_interval_ms` | no | 30000 | How often to poll (milliseconds, minimum 100). Each poll reads all numeric tools on this device and writes the values to the SQLite store. |
+
+**What gets recorded:** Only tools with numeric return types (`float`, `int`, `number`, `integer`) and no required parameters are auto-polled. Tools that return strings, require arguments, or use handlers are skipped.
+
+**When to adjust:** Lower the interval for fast-changing sensors (vibration, pressure). Raise it for slow-changing sensors (ambient temperature) to reduce storage.
 
 ## `[health]` — liveness check
 

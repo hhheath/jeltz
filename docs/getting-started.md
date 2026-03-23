@@ -189,9 +189,28 @@ The gateway is now running. It serves MCP tools over stdio — which means an MC
 
 Press `Ctrl+C` to stop (you'll restart it via the MCP client config in the next step).
 
+### Daemon mode (optional)
+
+For always-on monitoring with persistent history, use `jeltz daemon` instead:
+
+```bash
+jeltz daemon -p profiles --host 127.0.0.1 --port 8374
+```
+
+```
+✓ Discovered 1 device(s), exposing 8 tools
+  ✓ my_sensor
+✓ Background recording active
+✓ MCP server ready on http://127.0.0.1:8374/mcp
+```
+
+Daemon mode continuously polls sensors, records readings to SQLite, and serves MCP over Streamable HTTP. Clients can connect and disconnect without affecting the recording loop — so `fleet.get_history` and `fleet.search_anomalies` have data even when no client is connected.
+
 ## 9. Connect an MCP client
 
-### Claude Desktop
+### Stdio mode (client manages the process)
+
+#### Claude Desktop
 
 Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
@@ -208,7 +227,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 
 Restart Claude Desktop. You should see Jeltz's tools appear in the tool list.
 
-### Claude Code
+#### Claude Code
 
 Add to your project's `.mcp.json`:
 
@@ -227,6 +246,20 @@ Or add it via the CLI:
 
 ```bash
 claude mcp add jeltz -- jeltz start -p /absolute/path/to/your/profiles
+```
+
+### Daemon mode (connect to a running gateway)
+
+If you started Jeltz with `jeltz daemon`, point your MCP client at the HTTP endpoint:
+
+```json
+{
+  "mcpServers": {
+    "jeltz": {
+      "url": "http://localhost:8374/mcp"
+    }
+  }
+}
 ```
 
 ## 10. Talk to your sensor
@@ -270,6 +303,7 @@ mkdir -p my_profiles
 cp profiles/mock_sensor.toml my_profiles/
 jeltz start -p my_profiles
 ```
+
 
 The mock adapter connects instantly, passes health checks, and returns realistic values when tools are called (22.5°C, 47.3% humidity). You can customize the responses by editing the `[connection.mock_responses]` section in the profile:
 

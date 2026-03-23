@@ -9,7 +9,7 @@ from typing import Any
 from mcp.types import Tool
 
 from jeltz.adapters.base import AdapterResult
-from jeltz.devices.model import ToolReturns
+from jeltz.devices.model import ToolParam, ToolReturns
 from jeltz.gateway.discovery import DiscoveredDevice
 from jeltz.profiles.generator import generate_tools
 
@@ -32,6 +32,7 @@ class ToolRoute:
     tool_name: str  # original un-namespaced name
     command: str | None  # the command string to send over the adapter
     returns: ToolReturns | None = None  # return type spec for storage
+    params: dict[str, ToolParam] | None = None  # parameter definitions
 
 
 class Aggregator:
@@ -80,6 +81,7 @@ class Aggregator:
                     tool_name=tool_def.name,
                     command=tool_def.command,
                     returns=tool_def.returns,
+                    params=tool_def.params if tool_def.params else None,
                 )
 
     @property
@@ -90,6 +92,11 @@ class Aggregator:
     @property
     def device_names(self) -> list[str]:
         return list(self._devices.keys())
+
+    @property
+    def route_names(self) -> list[str]:
+        """All namespaced tool names in the routing table."""
+        return list(self._routes.keys())
 
     def get_route(self, namespaced_name: str) -> ToolRoute | None:
         return self._routes.get(namespaced_name)

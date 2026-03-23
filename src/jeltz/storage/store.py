@@ -58,7 +58,7 @@ class ReadingStore:
 
     async def init(self) -> None:
         """Open the database and create tables if needed."""
-        self._db = await aiosqlite.connect(self._db_path)
+        self._db = await aiosqlite.connect(self._db_path, isolation_level=None)
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
@@ -80,6 +80,20 @@ class ReadingStore:
         if self._db is None:
             raise RuntimeError("store not initialized — call init() first")
         return self._db
+
+    async def open_retention_conn(self) -> tuple[aiosqlite.Connection, bool]:
+        """Open a connection for retention cleanup.
+
+        Returns (connection, should_close). For file-backed databases,
+        opens a separate connection so retention transactions don't
+        interfere with the main connection's record() commits. For
+        in-memory databases (tests), returns the main connection.
+        """
+        if self._db_path == ":memory:":
+            return self._conn(), False
+        conn = await aiosqlite.connect(self._db_path, isolation_level=None)
+        await conn.execute("PRAGMA journal_mode=WAL")
+        return conn, True
 
     async def record(
         self,

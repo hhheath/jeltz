@@ -89,7 +89,7 @@ class TestMainGroup:
 
     def test_commands_registered(self, runner: CliRunner) -> None:
         result = runner.invoke(main, ["--help"])
-        for cmd in ("start", "status", "test", "add-device"):
+        for cmd in ("start", "daemon", "status", "test", "add-device"):
             assert cmd in result.output
 
 
@@ -165,6 +165,68 @@ class TestStart:
         self, mock_serve: AsyncMock, runner: CliRunner, profiles_dir: Path
     ) -> None:
         result = runner.invoke(main, ["start", "-p", str(profiles_dir)])
+        assert "Shutting down" in result.output
+
+
+class TestDaemon:
+    def test_missing_profiles_dir(self, runner: CliRunner) -> None:
+        result = runner.invoke(main, ["daemon", "-p", "/nonexistent"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_no_devices_empty_dir(self, runner: CliRunner, tmp_path: Path) -> None:
+        d = tmp_path / "empty"
+        d.mkdir()
+        result = runner.invoke(main, ["daemon", "-p", str(d)])
+        assert result.exit_code == 1
+        assert "No devices found" in result.output
+
+    def test_no_devices_all_broken(self, runner: CliRunner, tmp_path: Path) -> None:
+        d = tmp_path / "profiles"
+        d.mkdir()
+        (d / "bad.toml").write_text(INVALID_TOML)
+        result = runner.invoke(main, ["daemon", "-p", str(d)])
+        assert result.exit_code == 1
+        assert "Skipped" in result.output
+        assert "all profiles failed" in result.output
+
+    @patch(
+        "jeltz.gateway.server.JeltzServer.run_daemon_loops",
+        new_callable=AsyncMock,
+    )
+    def test_happy_path(
+        self, mock_daemon: AsyncMock, runner: CliRunner, profiles_dir: Path
+    ) -> None:
+        result = runner.invoke(main, ["daemon", "-p", str(profiles_dir)])
+        assert result.exit_code == 0
+        assert "Discovered 1 device(s)" in result.output
+        assert "Background recording active" in result.output
+        assert "MCP server ready on http://127.0.0.1:8374/mcp" in result.output
+        mock_daemon.assert_awaited_once()
+
+    @patch(
+        "jeltz.gateway.server.JeltzServer.run_daemon_loops",
+        new_callable=AsyncMock,
+    )
+    def test_custom_host_port(
+        self, mock_daemon: AsyncMock, runner: CliRunner, profiles_dir: Path
+    ) -> None:
+        result = runner.invoke(
+            main,
+            ["daemon", "-p", str(profiles_dir), "--host", "0.0.0.0", "--port", "9999"],
+        )
+        assert result.exit_code == 0
+        assert "http://0.0.0.0:9999/mcp" in result.output
+        mock_daemon.assert_awaited_once_with(host="0.0.0.0", port=9999)
+
+    @patch(
+        "jeltz.gateway.server.JeltzServer.run_daemon_loops",
+        side_effect=KeyboardInterrupt,
+    )
+    def test_keyboard_interrupt(
+        self, mock_daemon: AsyncMock, runner: CliRunner, profiles_dir: Path
+    ) -> None:
+        result = runner.invoke(main, ["daemon", "-p", str(profiles_dir)])
         assert "Shutting down" in result.output
 
 

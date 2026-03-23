@@ -102,6 +102,97 @@ def start(profiles_dir: Path, db_path: Path) -> None:
     show_default=True,
     help="Directory containing TOML device profiles.",
 )
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default="jeltz.db",
+    show_default=True,
+    help="Path to SQLite database for time-series storage.",
+)
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    help="Host to bind the HTTP server to.",
+)
+@click.option(
+    "--port",
+    default=8374,
+    show_default=True,
+    help="Port for the MCP HTTP server.",
+)
+def daemon(profiles_dir: Path, db_path: Path, host: str, port: int) -> None:
+    """Run Jeltz as a long-running daemon.
+
+    Continuously polls sensors and records readings to the store.
+    Serves MCP over Streamable HTTP so clients can connect and disconnect
+    without affecting the recording loop.
+    """
+    from jeltz.gateway.server import JeltzServer
+
+    if not profiles_dir.is_dir():
+        click.echo(f"Profiles directory not found: {profiles_dir}", err=True)
+        raise SystemExit(1)
+
+    server = JeltzServer(profiles_dir=profiles_dir, db_path=db_path)
+
+    async def _run() -> None:
+        discovery = await server.start()
+
+        for path, error in discovery.errors:
+            click.echo(f"⚠ Skipped {path.name}: {error}", err=True)
+
+        device_count = len(discovery.devices)
+        tool_count = len(server.handle_list_tools())
+
+        if device_count == 0:
+            if discovery.errors:
+                click.echo(
+                    "No devices loaded — all profiles failed to parse.",
+                    err=True,
+                )
+            else:
+                click.echo(
+                    f"No devices found. Add TOML profiles to"
+                    f" {profiles_dir.resolve()}",
+                    err=True,
+                )
+            await server.stop()
+            raise SystemExit(1)
+
+        click.echo(
+            f"✓ Discovered {device_count} device(s), exposing {tool_count} tools",
+            err=True,
+        )
+
+        if server.aggregator:
+            for name in server.aggregator.device_names:
+                s = server.aggregator.get_status(name)
+                if s and s.connected:
+                    click.echo(f"  ✓ {name}", err=True)
+                elif s:
+                    click.echo(f"  ✗ {name}: {s.error}", err=True)
+
+        click.echo("✓ Background recording active", err=True)
+        click.echo(f"✓ MCP server ready on http://{host}:{port}/mcp", err=True)
+
+        await server.run_daemon_loops(host=host, port=port)
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        click.echo("\nShutting down.", err=True)
+
+
+@main.command()
+@click.option(
+    "--profiles-dir",
+    "-p",
+    type=click.Path(file_okay=False, path_type=Path),
+    default="profiles",
+    show_default=True,
+    help="Directory containing TOML device profiles.",
+)
 def status(profiles_dir: Path) -> None:
     """Show discovered devices and their connection status."""
     from jeltz.gateway.aggregator import Aggregator

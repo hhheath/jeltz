@@ -97,6 +97,20 @@ class TestToolCatalog:
         tools2 = agg.tools
         assert tools1 is not tools2
 
+    def test_route_carries_params(self) -> None:
+        agg = Aggregator([_pressure_device()])
+        route = agg.get_route("pressure_sensor.get_reading")
+        assert route is not None
+        assert route.params is not None
+        assert "channel" in route.params
+        assert route.params["channel"].type == "int"
+
+    def test_route_params_none_when_no_params(self) -> None:
+        agg = Aggregator([_temp_device()])
+        route = agg.get_route("temp_sensor.get_reading")
+        assert route is not None
+        assert route.params is None  # no params defined
+
     def test_duplicate_device_names_raises(self) -> None:
         d1 = _mock_device("sensor", tools=[])
         d2 = _mock_device("sensor", tools=[])

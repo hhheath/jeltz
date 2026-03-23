@@ -253,6 +253,61 @@ class TestDeviceToolDispatch:
         assert "unknown tool" in result.error
 
 
+class TestDaemonActive:
+    """The _daemon_active flag suppresses per-call recording."""
+
+    @pytest.fixture
+    def responsive_profiles_dir(self, tmp_path: Path) -> Path:
+        (tmp_path / "temp.toml").write_text(
+            '[device]\n'
+            'name = "temp_sensor"\n'
+            '[connection]\nprotocol = "mock"\n'
+            '[[tools]]\n'
+            'name = "get_reading"\n'
+            'description = "Get temperature"\n'
+            'command = "READ_TEMP"\n'
+            '[tools.returns]\ntype = "float"\nunit = "celsius"\n'
+        )
+        return tmp_path
+
+    @pytest.fixture
+    async def responsive_server(self, responsive_profiles_dir: Path):
+        srv = JeltzServer(
+            profiles_dir=responsive_profiles_dir, db_path=":memory:"
+        )
+        discovery = await srv.start()
+        for device in discovery.devices:
+            if isinstance(device.adapter, MockAdapter):
+                device.adapter.responses = {"READ_TEMP": "22.5"}
+        yield srv
+        await srv.stop()
+
+    async def test_daemon_active_skips_maybe_record(
+        self, responsive_server: JeltzServer
+    ) -> None:
+        responsive_server._daemon_active = True
+        await responsive_server.handle_call_tool("temp_sensor.get_reading", {})
+
+        assert responsive_server.store is not None
+        latest = await responsive_server.store.get_latest(
+            "temp_sensor", "get_reading"
+        )
+        assert latest is None  # Not recorded because daemon_active
+
+    async def test_daemon_inactive_records(
+        self, responsive_server: JeltzServer
+    ) -> None:
+        assert not responsive_server._daemon_active
+        await responsive_server.handle_call_tool("temp_sensor.get_reading", {})
+
+        assert responsive_server.store is not None
+        latest = await responsive_server.store.get_latest(
+            "temp_sensor", "get_reading"
+        )
+        assert latest is not None
+        assert latest.value == 22.5
+
+
 class TestStoreOnRead:
     """Device tool calls should record numeric readings to the store."""
 
