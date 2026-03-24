@@ -18,7 +18,13 @@ from typing import Any
 
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, ServerCapabilities, TextContent, Tool
+from mcp.types import (
+    CallToolResult,
+    ServerCapabilities,
+    TextContent,
+    Tool,
+    ToolsCapability,
+)
 
 try:
     from mcp.server import InitializationOptions
@@ -63,11 +69,11 @@ class JeltzServer:
         self._register_handlers()
 
     def _register_handlers(self) -> None:
-        @self._server.list_tools()
+        @self._server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]
         async def list_tools() -> list[Tool]:
             return self.handle_list_tools()
 
-        @self._server.call_tool()
+        @self._server.call_tool()  # type: ignore[untyped-decorator]
         async def call_tool(
             name: str, arguments: dict[str, Any] | None
         ) -> CallToolResult:
@@ -105,20 +111,22 @@ class JeltzServer:
 
         # Device tools
         if self._aggregator:
-            result = await self._aggregator.call_tool(name, args)
-            if result.success:
+            adapter_result = await self._aggregator.call_tool(name, args)
+            if adapter_result.success:
                 # Only record on client tool calls — the background
                 # recorder handles periodic recording in daemon mode.
                 if not self._daemon_active:
-                    await self._maybe_record(name, result.data)
-                data = {"data": result.data}
+                    await self._maybe_record(name, adapter_result.data)
+                data = {"data": adapter_result.data}
                 return CallToolResult(
                     content=[TextContent(type="text", text=str(data))],
                     structuredContent=data,
                 )
             else:
                 return CallToolResult(
-                    content=[TextContent(type="text", text=result.error or "unknown error")],
+                    content=[TextContent(
+                        type="text", text=adapter_result.error or "unknown error",
+                    )],
                     isError=True,
                 )
 
@@ -224,7 +232,7 @@ class JeltzServer:
                 init_options = InitializationOptions(
                     server_name="jeltz",
                     server_version="0.1.0",
-                    capabilities=ServerCapabilities(tools={}),
+                    capabilities=ServerCapabilities(tools=ToolsCapability()),
                 )
                 await self._server.run(
                     read_stream, write_stream, init_options
@@ -268,7 +276,7 @@ class JeltzServer:
             except TimeoutError:
                 pass
 
-    def _build_http_app(self):  # type: ignore[no-untyped-def]
+    def _build_http_app(self) -> tuple[Any, Any]:
         """Build a Starlette ASGI app that serves MCP over Streamable HTTP.
 
         Imports starlette and the MCP StreamableHTTPSessionManager lazily

@@ -102,7 +102,7 @@ FLEET_TOOLS: list[Tool] = [
     ),
 ]
 
-_HandlerFn = Callable[["FleetTools", dict[str, Any]], Awaitable[dict[str, Any]]]
+_HandlerFn = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 class FleetTools:

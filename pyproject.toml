@@ -59,3 +59,11 @@ warn_unused_configs = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = ["serial_asyncio", "serial_asyncio.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "jeltz.adapters.mqtt"
+disable_error_code = ["attr-defined", "name-defined"]

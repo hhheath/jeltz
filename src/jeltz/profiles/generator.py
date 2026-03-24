@@ -68,7 +68,7 @@ def _build_description(tool_def: ToolDefinition) -> str:
     """Build tool description, appending return type/unit info if available."""
     desc = tool_def.description
     if tool_def.returns:
-        returns_info = tool_def.returns.type
+        returns_info: str = tool_def.returns.type
         if tool_def.returns.unit:
             returns_info = f"{returns_info} ({tool_def.returns.unit})"
         desc = f"{desc}. Returns: {returns_info}"
