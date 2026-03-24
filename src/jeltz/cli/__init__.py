@@ -193,6 +193,130 @@ def daemon(profiles_dir: Path, db_path: Path, host: str, port: int) -> None:
     show_default=True,
     help="Directory containing TOML device profiles.",
 )
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default="jeltz.db",
+    show_default=True,
+    help="Path to SQLite database for time-series storage.",
+)
+@click.option(
+    "--api-url",
+    default="http://localhost:11434/v1",
+    show_default=True,
+    help="OpenAI-compatible API endpoint (Ollama, llama.cpp, LM Studio, etc.).",
+)
+@click.option(
+    "--model",
+    "-m",
+    default="llama3.2",
+    show_default=True,
+    help="Model name to use.",
+)
+@click.option(
+    "--api-key",
+    default="jeltz",
+    envvar="JELTZ_API_KEY",
+    help="API key (most local servers ignore this).",
+)
+@click.option(
+    "--temperature",
+    default=0.1,
+    show_default=True,
+    type=float,
+    help="LLM temperature.",
+)
+@click.option(
+    "--system-prompt",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to a custom system prompt file.",
+)
+def chat(
+    profiles_dir: Path,
+    db_path: Path,
+    api_url: str,
+    model: str,
+    api_key: str,
+    temperature: float,
+    system_prompt: Path | None,
+) -> None:
+    """Chat with your sensor fleet via a local LLM.
+
+    Connects to an OpenAI-compatible API (Ollama, llama.cpp, LM Studio, vLLM)
+    and routes tool calls through the Jeltz gateway in-process. The LLM reasons
+    about your devices; Jeltz executes the tool calls against real hardware.
+    """
+    try:
+        from openai import OpenAI as _OpenAI  # noqa: F401
+    except ImportError:
+        click.echo(
+            "jeltz chat requires the openai package.\n"
+            "Install it with: pip install 'jeltz[chat]'",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    from jeltz.chat.client import ChatClient
+    from jeltz.chat.render import print_banner, print_error, render_event
+    from jeltz.gateway.server import JeltzServer
+
+    if not profiles_dir.is_dir():
+        click.echo(f"Profiles directory not found: {profiles_dir}", err=True)
+        raise SystemExit(1)
+
+    custom_prompt: str | None = None
+    if system_prompt is not None:
+        custom_prompt = system_prompt.read_text()
+
+    server = JeltzServer(profiles_dir=profiles_dir, db_path=db_path)
+    client = ChatClient(
+        server=server,
+        api_url=api_url,
+        model=model,
+        api_key=api_key,
+        temperature=temperature,
+        system_prompt=custom_prompt,
+    )
+
+    async def _run() -> None:
+        await client.initialize()
+        try:
+            device_count = len(server.aggregator.device_names) if server.aggregator else 0
+            print_banner(device_count, client.tool_count, model, api_url)
+
+            while True:
+                try:
+                    user_input = click.prompt("You", prompt_suffix=": ")
+                except click.Abort:
+                    break
+
+                if not user_input.strip():
+                    continue
+
+                try:
+                    async for event in client.send_message(user_input):
+                        render_event(event)
+                except Exception as e:
+                    print_error(str(e))
+        finally:
+            await client.shutdown()
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        click.echo("\nBye.", err=True)
+
+
+@main.command()
+@click.option(
+    "--profiles-dir",
+    "-p",
+    type=click.Path(file_okay=False, path_type=Path),
+    default="profiles",
+    show_default=True,
+    help="Directory containing TOML device profiles.",
+)
 def status(profiles_dir: Path) -> None:
     """Show discovered devices and their connection status."""
     from jeltz.gateway.aggregator import Aggregator

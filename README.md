@@ -1,6 +1,6 @@
 # Jeltz
 
-> **Status: Phase 1 complete.** Gateway core, CLI, serial + MQTT adapters, fleet-level tools, SQLite time-series storage, daemon mode with background recording, and built-in profiles — all working. 305 tests passing. See the [Getting Started guide](docs/getting-started.md) to try it.
+> **Status: Phase 1 complete + local LLM chat.** Gateway core, CLI, serial + MQTT adapters, fleet-level tools, SQLite time-series storage, daemon mode, built-in profiles, and `jeltz chat` for local LLM interaction — all working. 356 tests passing. See the [Getting Started guide](docs/getting-started.md) to try it.
 
 **Your sensors will be processed.**
 
@@ -158,7 +158,13 @@ jeltz status -p profiles
 jeltz start -p profiles
 ```
 
-Then add Jeltz to your MCP client. For Claude Desktop or Claude Code:
+Or chat directly with a local LLM (requires [Ollama](https://ollama.com/) or any OpenAI-compatible server):
+
+```bash
+jeltz chat -p profiles -m llama3.2
+```
+
+To use a cloud LLM instead, add Jeltz to your MCP client. For Claude Desktop or Claude Code:
 
 **Stdio mode** (client manages the process):
 ```json
@@ -188,10 +194,50 @@ Then add Jeltz to your MCP client. For Claude Desktop or Claude Code:
 ```bash
 jeltz start -p profiles      # Start the MCP gateway (stdio transport)
 jeltz daemon -p profiles     # Long-running daemon: background recording + HTTP
+jeltz chat -p profiles       # Interactive chat with a local LLM
 jeltz status -p profiles     # Show connected devices and health
 jeltz test <profile.toml>    # Test a single device connection
 jeltz add-device <file.toml> # Validate and copy a profile into profiles/
 ```
+
+### `jeltz chat` — local LLM interaction
+
+**`jeltz chat`** connects a local LLM to your sensor fleet. It bridges any OpenAI-compatible API (Ollama, llama.cpp, LM Studio, vLLM) to Jeltz's MCP tools in-process. The LLM reasons about your devices; Jeltz executes the tool calls against real hardware.
+
+```bash
+jeltz chat -p profiles -m llama3.2
+```
+
+```
+✓ Connected to 3 device(s), exposing 15 tools
+✓ LLM: llama3.2 via http://localhost:11434/v1
+✓ Ready (Ctrl+C to exit)
+
+You: anything weird happening?
+  ⚙ fleet.search_anomalies
+  ⚙ fleet.get_history(device_id='pressure_line', sensor_id='get_psi', hours=24)
+
+Two things worth looking at:
+
+1. pressure_line PSI has been climbing for 6 hours — up 12% from baseline.
+   Check for a downstream restriction or failing relief valve.
+
+2. mqtt_sensor humidity is flatlined at 45.0% for 9 hours.
+   Almost certainly a stuck sensor. Recommend recalibration.
+
+Everything else is within normal range.
+
+You:
+```
+
+No internet required. No data leaves the gateway. Works with any model that supports tool calling — just point `--api-url` at the right endpoint:
+
+| Runtime | Command |
+|---------|---------|
+| Ollama | `jeltz chat -p profiles` (default) |
+| llama.cpp | `jeltz chat -p profiles --api-url http://localhost:8080/v1` |
+| LM Studio | `jeltz chat -p profiles --api-url http://localhost:1234/v1` |
+| vLLM | `jeltz chat -p profiles --api-url http://localhost:8000/v1` |
 
 ### `start` vs `daemon`
 
@@ -220,16 +266,16 @@ jeltz daemon -p profiles --host 0.0.0.0 --port 8374
 
 **Natural language commissioning.** "I just installed 3 new pressure sensors on the coolant lines. Run a health check on all three, verify they're reading within spec, and set alert thresholds at 15% above their current baseline." One sentence drives a multi-tool workflow: discover, read, calculate, configure.
 
-**Air-gapped / local-first deployments.** Pair Jeltz with a local LLM (llama.cpp on a Raspberry Pi 5 or Qualcomm IQ9) for fully offline, data-sovereign AI interaction with your equipment. No cloud, no internet, no data leaving the building.
+**Air-gapped / local-first deployments.** `jeltz chat` pairs with any local LLM (Ollama, llama.cpp on a Raspberry Pi 5 or Qualcomm IQ9) for fully offline, data-sovereign AI interaction with your equipment. No cloud, no internet, no data leaving the building.
 
 **Home automation with brains.** Bridge your DIY sensors into any MCP-compatible AI assistant. Not just "turn on the lights" — "the humidity in the basement has been climbing for 3 days and the sump pump hasn't cycled. You might have a drainage issue."
 
 ## Roadmap
 
-- **Phase 1 (complete):** ~~Core framework~~ ✓, ~~serial adapter~~ ✓, ~~MQTT adapter~~ ✓, ~~SQLite time-series storage~~ ✓, ~~fleet-level tools~~ ✓, ~~CLI~~ ✓, ~~built-in profiles~~ ✓, ~~mock adapter~~ ✓, ~~daemon mode~~ ✓
+- **Phase 1 (complete):** ~~Core framework~~ ✓, ~~serial adapter~~ ✓, ~~MQTT adapter~~ ✓, ~~SQLite time-series storage~~ ✓, ~~fleet-level tools~~ ✓, ~~CLI~~ ✓, ~~built-in profiles~~ ✓, ~~mock adapter~~ ✓, ~~daemon mode~~ ✓, ~~local LLM chat~~ ✓
 - **Phase 2:** Modbus RTU/TCP adapter, OPC-UA adapter, community profile repository, device namespacing, actuator safety controls
 - **Phase 3:** BLE adapter, CAN bus adapter, `jeltz-arduino` C++ library, USB adapter, Edge Impulse integration, event streaming
-- **Phase 4:** Local LLM integration, web dashboard, alert system, IQ9 reference deployment, additional ML platform integrations
+- **Phase 4:** Web dashboard, alert system, IQ9 reference deployment, additional ML platform integrations
 
 ## Documentation
 
@@ -240,7 +286,7 @@ jeltz daemon -p profiles --host 0.0.0.0 --port 8374
 ## Development
 
 ```bash
-hatch run test        # Run tests (305 tests, mock adapter, no hardware needed)
+hatch run test        # Run tests (356 tests, mock adapter, no hardware needed)
 hatch run lint        # Ruff linter
 hatch run typecheck   # Mypy strict mode
 ```

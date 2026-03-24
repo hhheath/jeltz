@@ -36,6 +36,9 @@ jeltz/
 │   ├── storage/
 │   │   ├── store.py       # SQLite time-series store (readings, history, baselines)
 │   │   └── retention.py   # Data retention policies and cleanup
+│   ├── chat/
+│   │   ├── client.py      # ChatClient: bridges local LLM to MCP tools
+│   │   └── render.py      # Terminal rendering for chat events
 │   └── events/
 │       └── bus.py         # Internal event bus
 ├── profiles/              # Built-in TOML profiles (sensors/, platforms/, examples/)
@@ -51,7 +54,7 @@ jeltz/
 
 **Phase 3:** BLE adapter, CAN bus adapter, `jeltz-arduino` C++ library (separate repo), USB adapter, Edge Impulse MCP server federation, event streaming.
 
-**Phase 4:** Local LLM integration, web dashboard, alert system, IQ9 reference deployment, additional ML platform integrations.
+**Phase 4:** Web dashboard, alert system, IQ9 reference deployment, additional ML platform integrations.
 
 ## System overview
 
@@ -211,6 +214,26 @@ readings table:
 
 **What is NOT stored:** Raw binary protocol data, adapter debug logs, or MCP request/response payloads. Only the parsed sensor values. Debugging data goes to the standard logging system.
 
+### Chat client (local LLM bridge)
+
+`jeltz chat` is a thin bridge that connects a local LLM to Jeltz's MCP tools. It is *not* an LLM runtime — it assumes something else (Ollama, llama.cpp, LM Studio, vLLM) is already serving an OpenAI-compatible API.
+
+```
+User (terminal) → jeltz chat → Local LLM (OpenAI-compatible API)
+                     ↕ (in-process)
+                   JeltzServer → adapters → devices
+```
+
+**How it works:** `ChatClient` starts a `JeltzServer` in-process, converts MCP tool schemas to OpenAI function-calling format, and runs a chat loop. When the LLM returns tool calls, the client executes them via `server.handle_call_tool()` and feeds the results back to the LLM. No network hops between the chat client and the gateway — it's all in the same process.
+
+**Tool name mapping:** MCP uses dots for namespacing (`fleet.list_devices`), but some OpenAI-compatible APIs reject dots in function names. The client maps `fleet.list_devices` ↔ `fleet__list_devices` transparently.
+
+**System prompt:** Auto-generated from live server state — lists connected devices, their protocols, health, and available tools. Overridable with `--system-prompt <file>`.
+
+**History management:** Conversation history is maintained in-memory for the session. On error (including Ctrl+C mid-tool-call), the history is rolled back to prevent corruption.
+
+**Optional dependency:** The `openai` Python SDK is an optional dependency (`pip install jeltz[chat]`). All other Jeltz features work without it.
+
 ## What is NOT in v1
 
 These are deliberate omissions, not oversights:
@@ -218,7 +241,7 @@ These are deliberate omissions, not oversights:
 - **Authentication on the MCP endpoint.** The gateway binds to localhost by default. Network-exposed deployments need auth — this is a known gap, documented, and planned for v2.
 - **Industrial protocol adapters (Modbus, OPC-UA).** Phase 2, and the highest priority after v1. In real industrial environments, serial sensors connect to PLCs and RTUs — not directly to a gateway. Modbus RTU/TCP and OPC-UA are how Jeltz will talk to those existing systems. Serial and MQTT cover prototyping and IIoT greenfield; Modbus and OPC-UA cover brownfield.
 - **Web dashboard.** Phase 4. The CLI provides all monitoring for v1.
-- **Local LLM integration.** Phase 4. Jeltz works with any MCP client — Claude Desktop, Cursor, Claude Code. Adding llama.cpp as a built-in client is an enhancement, not a core feature.
+- **Local LLM integration.** ~~Phase 4.~~ **Done.** `jeltz chat` bridges any OpenAI-compatible local LLM (Ollama, llama.cpp, LM Studio, vLLM) to Jeltz's MCP tools in-process. The LLM management (downloading models, running inference) stays with the external server — Jeltz just connects to its API. Optional dependency: `pip install jeltz[chat]`.
 - **The `jeltz-arduino` library.** Phase 3. It's a separate repo with a separate language (C++) and a separate distribution channel (Arduino Library Manager / PlatformIO). v1 is profile-driven only.
 - **Actuator safety controls.** If a profile defines a tool that triggers a relay or motor, there's no confirmation step or safety interlock in v1. This is documented as a warning. Phase 2 adds configurable confirmation requirements for write/actuate tools.
 - **Profile registry / package manager.** Phase 2. For v1, profiles are files in a directory. Community sharing is via Git.

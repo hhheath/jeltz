@@ -320,6 +320,48 @@ This is useful for testing your MCP client integration before hardware arrives, 
 
 ---
 
+## Chat with a local LLM
+
+If you have [Ollama](https://ollama.com/) (or any OpenAI-compatible server) running on the same machine, you can chat directly with your sensors without configuring an MCP client:
+
+```bash
+# Pull a model that supports tool calling
+ollama pull llama3.2
+
+# Start chatting (uses mock profiles — no hardware needed)
+jeltz chat -p my_profiles -m llama3.2
+```
+
+```
+✓ Connected to 1 device(s), exposing 5 tools
+✓ LLM: llama3.2 via http://localhost:11434/v1
+✓ Ready (Ctrl+C to exit)
+
+You: what's the temperature?
+  ⚙ mock_sensor.get_temperature
+
+The current temperature reading is 22.5°C.
+
+You:
+```
+
+The `⚙` lines show which tools the LLM is calling. You can customize the LLM endpoint:
+
+```bash
+# llama.cpp server
+jeltz chat -p my_profiles --api-url http://localhost:8080/v1
+
+# Custom model
+jeltz chat -p my_profiles -m mistral
+
+# Custom system prompt
+jeltz chat -p my_profiles --system-prompt my_prompt.txt
+```
+
+This works fully offline — no internet, no cloud, no data leaving the machine. See the [README](../README.md#jeltz-chat--local-llm-interaction) for the full list of options and supported runtimes.
+
+---
+
 ## Adding more devices
 
 Add more TOML profiles to the `profiles/` directory — one per device. Each device gets its own namespaced tools. With two sensors, the LLM sees tools like `sensor_1.get_temperature` and `sensor_2.get_temperature` and can compare readings across them.
@@ -328,6 +370,7 @@ See the [built-in profiles](../profiles/) for more examples, or write your own f
 
 ## What's next
 
+- **Try `jeltz chat`** — if you have Ollama installed, `jeltz chat -p my_profiles -m llama3.2` lets you talk to your sensors with a local LLM. No cloud required.
 - **Add a second sensor** — this is where Jeltz gets interesting. Fleet tools like `fleet.get_all_readings` and `fleet.search_anomalies` shine when there are multiple devices to correlate.
 - **Try an MQTT sensor** — connect a Pico W or ESP32 over WiFi. See [`profiles/mqtt_sensor.toml`](../profiles/mqtt_sensor.toml) for the setup.
 - **Write a custom profile** — any device that speaks text commands over serial (or request/reply over MQTT) can be connected to Jeltz.

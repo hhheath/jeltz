@@ -12,13 +12,14 @@ Python 3.11+, `mcp` SDK, `pyserial`, `paho-mqtt`, `tomllib`, `click`, `pydantic`
 
 ```bash
 # Development
-hatch run test       # Run test suite (305 tests, mock adapter, no hardware needed)
+hatch run test       # Run test suite (356 tests, mock adapter, no hardware needed)
 hatch run lint       # Ruff linter
 hatch run typecheck  # Mypy
 
 # CLI (all working)
 jeltz start -p profiles      # Start MCP gateway (stdio transport)
 jeltz daemon -p profiles     # Long-running daemon: background recording + HTTP
+jeltz chat -p profiles       # Interactive chat with a local LLM (requires openai pkg)
 jeltz status -p profiles     # Show connected devices and health
 jeltz test <profile.toml>    # Test a single device connection
 jeltz add-device <file.toml> # Validate and copy a profile into profiles/
@@ -38,8 +39,7 @@ IMPORTANT: These are non-negotiable for v1.
 ## Do NOT
 
 - Add Rust or compiled extensions
-- Add a web dashboard (Phase 3)
-- Add local LLM integration / llama.cpp (Phase 3)
+- Add a web dashboard (Phase 4)
 - Add auth to the MCP endpoint (v2)
 - Run MCP servers on microcontrollers
 - Over-engineer the profile schema — start minimal
