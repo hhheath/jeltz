@@ -218,17 +218,25 @@ readings table:
 
 `jeltz chat` is a thin bridge that connects a local LLM to Jeltz's MCP tools. It is *not* an LLM runtime — it assumes something else (Ollama, llama.cpp, LM Studio, vLLM) is already serving an OpenAI-compatible API.
 
+**Two modes:**
+
 ```
+# In-process (default) — starts its own JeltzServer:
 User (terminal) → jeltz chat → Local LLM (OpenAI-compatible API)
                      ↕ (in-process)
                    JeltzServer → adapters → devices
+
+# Daemon (--daemon-url) — connects to a running jeltz daemon:
+User (terminal) → jeltz chat → Local LLM (OpenAI-compatible API)
+                     ↕ (MCP over HTTP)
+                   jeltz daemon → adapters → devices
 ```
 
-**How it works:** `ChatClient` starts a `JeltzServer` in-process, converts MCP tool schemas to OpenAI function-calling format, and runs a chat loop. When the LLM returns tool calls, the client executes them via `server.handle_call_tool()` and feeds the results back to the LLM. No network hops between the chat client and the gateway — it's all in the same process.
+**How it works:** `ChatClient` converts MCP tool schemas to OpenAI function-calling format and runs a streaming chat loop. All API calls use `stream=True` — text tokens render as they arrive, and tool call deltas are accumulated until complete. When the LLM returns tool calls, the client executes them via `server.handle_call_tool()` (in-process) or `mcp_session.call_tool()` (daemon) and feeds the results back.
 
 **Tool name mapping:** MCP uses dots for namespacing (`fleet.list_devices`), but some OpenAI-compatible APIs reject dots in function names. The client maps `fleet.list_devices` ↔ `fleet__list_devices` transparently.
 
-**System prompt:** Auto-generated from live server state — lists connected devices, their protocols, health, and available tools. Overridable with `--system-prompt <file>`.
+**System prompt:** Auto-generated from the tool list — works in both modes. Overridable with `--system-prompt <file>`.
 
 **History management:** Conversation history is maintained in-memory for the session. On error (including Ctrl+C mid-tool-call), the history is rolled back to prevent corruption.
 

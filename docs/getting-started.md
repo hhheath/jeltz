@@ -288,20 +288,18 @@ Every time a numeric tool is called, the reading is automatically stored in Jelt
 
 ## Testing without hardware
 
-You can try Jeltz without any physical devices using the built-in mock profile. It simulates a temperature + humidity sensor with realistic canned responses.
+You can try Jeltz without any physical devices using the mock adapter. The fastest way is `jeltz init`:
 
-First, test the mock profile:
+```bash
+jeltz init my_project
+cd my_project
+```
+
+This creates a `profiles/` directory with a `mock_sensor.toml` that simulates a temperature + humidity sensor. Test it:
 
 ```bash
 jeltz test profiles/mock_sensor.toml
-```
-
-To start the gateway with only the mock device (avoiding connection errors from the serial/MQTT profiles), copy it into its own directory:
-
-```bash
-mkdir -p my_profiles
-cp profiles/mock_sensor.toml my_profiles/
-jeltz start -p my_profiles
+jeltz start -p profiles
 ```
 
 
@@ -329,7 +327,7 @@ If you have [Ollama](https://ollama.com/) (or any OpenAI-compatible server) runn
 ollama pull llama3.2
 
 # Start chatting (uses mock profiles — no hardware needed)
-jeltz chat -p my_profiles -m llama3.2
+jeltz chat -p profiles -m llama3.2
 ```
 
 ```
@@ -349,13 +347,13 @@ The `⚙` lines show which tools the LLM is calling. You can customize the LLM e
 
 ```bash
 # llama.cpp server
-jeltz chat -p my_profiles --api-url http://localhost:8080/v1
+jeltz chat -p profiles --api-url http://localhost:8080/v1
 
 # Custom model
-jeltz chat -p my_profiles -m mistral
+jeltz chat -p profiles -m mistral
 
 # Custom system prompt
-jeltz chat -p my_profiles --system-prompt my_prompt.txt
+jeltz chat -p profiles --system-prompt my_prompt.txt
 ```
 
 This works fully offline — no internet, no cloud, no data leaving the machine. See the [README](../README.md#jeltz-chat--local-llm-interaction) for the full list of options and supported runtimes.
@@ -370,7 +368,7 @@ See the [built-in profiles](../profiles/) for more examples, or write your own f
 
 ## What's next
 
-- **Try `jeltz chat`** — if you have Ollama installed, `jeltz chat -p my_profiles -m llama3.2` lets you talk to your sensors with a local LLM. No cloud required.
+- **Try `jeltz chat`** — if you have Ollama installed, `jeltz chat -p profiles -m llama3.2` lets you talk to your sensors with a local LLM. No cloud required.
 - **Add a second sensor** — this is where Jeltz gets interesting. Fleet tools like `fleet.get_all_readings` and `fleet.search_anomalies` shine when there are multiple devices to correlate.
 - **Try an MQTT sensor** — connect a Pico W or ESP32 over WiFi. See [`profiles/mqtt_sensor.toml`](../profiles/mqtt_sensor.toml) for the setup.
 - **Write a custom profile** — any device that speaks text commands over serial (or request/reply over MQTT) can be connected to Jeltz.

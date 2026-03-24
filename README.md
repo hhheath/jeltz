@@ -1,6 +1,6 @@
 # Jeltz
 
-> **Status: Phase 1 complete + local LLM chat.** Gateway core, CLI, serial + MQTT adapters, fleet-level tools, SQLite time-series storage, daemon mode, built-in profiles, and `jeltz chat` for local LLM interaction — all working. 356 tests passing. See the [Getting Started guide](docs/getting-started.md) to try it.
+> **Status: Phase 1 complete + local LLM chat.** Gateway core, CLI, serial + MQTT adapters, fleet-level tools, SQLite time-series storage, daemon mode, built-in profiles, and `jeltz chat` for local LLM interaction — all working. 367 tests passing. See the [Getting Started guide](docs/getting-started.md) to try it.
 
 **Your sensors will be processed.**
 
@@ -144,12 +144,11 @@ For a full walkthrough (wiring, firmware, MCP client setup), see the **[Getting 
 Quick version:
 
 ```bash
-# Edit the built-in serial profile — set your serial port, adjust commands if needed
-# (or use it as-is with the example firmware from the profile comments)
-vim profiles/serial_sensor.toml
+# Scaffold a new project (creates profiles/ with a mock sensor)
+jeltz init myproject && cd myproject
 
-# Test the device connection
-jeltz test profiles/serial_sensor.toml
+# Test the mock device
+jeltz test profiles/mock_sensor.toml
 
 # Check what the gateway sees
 jeltz status -p profiles
@@ -192,6 +191,7 @@ To use a cloud LLM instead, add Jeltz to your MCP client. For Claude Desktop or 
 ## CLI
 
 ```bash
+jeltz init [directory]        # Scaffold a new project with mock profile
 jeltz start -p profiles      # Start the MCP gateway (stdio transport)
 jeltz daemon -p profiles     # Long-running daemon: background recording + HTTP
 jeltz chat -p profiles       # Interactive chat with a local LLM
@@ -199,6 +199,8 @@ jeltz status -p profiles     # Show connected devices and health
 jeltz test <profile.toml>    # Test a single device connection
 jeltz add-device <file.toml> # Validate and copy a profile into profiles/
 ```
+
+All commands accept `-v` (INFO) or `-vv` (DEBUG) for verbose logging.
 
 ### `jeltz chat` — local LLM interaction
 
@@ -238,6 +240,12 @@ No internet required. No data leaves the gateway. Works with any model that supp
 | llama.cpp | `jeltz chat -p profiles --api-url http://localhost:8080/v1` |
 | LM Studio | `jeltz chat -p profiles --api-url http://localhost:1234/v1` |
 | vLLM | `jeltz chat -p profiles --api-url http://localhost:8000/v1` |
+
+If you have a running `jeltz daemon`, chat can connect to it remotely instead of starting its own gateway:
+
+```bash
+jeltz chat --daemon-url http://localhost:8374/mcp -m llama3.2
+```
 
 ### `start` vs `daemon`
 
