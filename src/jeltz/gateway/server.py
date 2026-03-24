@@ -265,7 +265,7 @@ class JeltzServer:
                     stop_event.wait(), timeout=interval_hours * 3600
                 )
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     def _build_http_app(self):  # type: ignore[no-untyped-def]

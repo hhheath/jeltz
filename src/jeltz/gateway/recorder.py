@@ -89,7 +89,7 @@ async def _poll_device(
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval_s)
             break  # stop_event was set
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass  # interval elapsed, poll again
 
 
