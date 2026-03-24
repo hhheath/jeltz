@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from jeltz.chat.client import AssistantMessageEvent, ToolCallEvent, ToolResultEvent
+from jeltz.chat.client import (
+    AssistantMessageEvent,
+    StreamChunkEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+)
 from jeltz.chat.render import print_banner, print_error, render_event
 
 
@@ -11,7 +16,6 @@ class TestRenderEvent:
         render_event(ToolCallEvent(name="fleet.list_devices", arguments={}))
         captured = capsys.readouterr()
         assert "fleet.list_devices" in captured.out
-        # No parens with args when empty
         assert "=" not in captured.out
 
     def test_tool_call_with_args(self, capsys) -> None:  # type: ignore[no-untyped-def]
@@ -45,13 +49,24 @@ class TestRenderEvent:
             )
         )
         captured = capsys.readouterr()
-        # Successful results are intentionally not printed
         assert captured.out == ""
 
     def test_assistant_message(self, capsys) -> None:  # type: ignore[no-untyped-def]
         render_event(AssistantMessageEvent(content="All sensors nominal."))
         captured = capsys.readouterr()
         assert "All sensors nominal." in captured.out
+
+    def test_stream_chunk(self, capsys) -> None:  # type: ignore[no-untyped-def]
+        render_event(StreamChunkEvent(text="Hello "))
+        render_event(StreamChunkEvent(text="world"))
+        captured = capsys.readouterr()
+        assert captured.out == "Hello world"
+
+    def test_stream_chunk_done(self, capsys) -> None:  # type: ignore[no-untyped-def]
+        render_event(StreamChunkEvent(text="", done=True))
+        captured = capsys.readouterr()
+        # Done marker prints trailing newlines
+        assert "\n" in captured.out
 
 
 class TestPrintBanner:

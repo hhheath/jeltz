@@ -3,16 +3,33 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 from pathlib import Path
 
 import click
 
+_LOG_LEVELS = {
+    0: logging.WARNING,
+    1: logging.INFO,
+    2: logging.DEBUG,
+}
+
 
 @click.group()
 @click.version_option()
-def main() -> None:
+@click.option(
+    "-v", "--verbose",
+    count=True,
+    help="Increase log verbosity (-v for INFO, -vv for DEBUG).",
+)
+def main(verbose: int) -> None:
     """Jeltz — MCP gateway for physical devices."""
+    level = _LOG_LEVELS.get(verbose, logging.DEBUG)
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
 
 
 @main.command()
@@ -232,6 +249,11 @@ def daemon(profiles_dir: Path, db_path: Path, host: str, port: int) -> None:
     default=None,
     help="Path to a custom system prompt file.",
 )
+@click.option(
+    "--daemon-url",
+    default=None,
+    help="Connect to a running jeltz daemon instead of starting in-process (e.g. http://localhost:8374/mcp).",
+)
 def chat(
     profiles_dir: Path,
     db_path: Path,
@@ -240,12 +262,13 @@ def chat(
     api_key: str,
     temperature: float,
     system_prompt: Path | None,
+    daemon_url: str | None,
 ) -> None:
     """Chat with your sensor fleet via a local LLM.
 
     Connects to an OpenAI-compatible API (Ollama, llama.cpp, LM Studio, vLLM)
-    and routes tool calls through the Jeltz gateway in-process. The LLM reasons
-    about your devices; Jeltz executes the tool calls against real hardware.
+    and routes tool calls through the Jeltz gateway. By default starts a
+    gateway in-process; use --daemon-url to connect to a running daemon.
     """
     try:
         from openai import OpenAI as _OpenAI  # noqa: F401
@@ -257,33 +280,50 @@ def chat(
         )
         raise SystemExit(1)
 
-    from jeltz.chat.client import ChatClient
-    from jeltz.chat.render import print_banner, print_error, render_event
+    from jeltz.chat.client import ChatClient, StreamChunkEvent
+    from jeltz.chat.render import print_banner, print_error, render_event, render_stream_start
     from jeltz.gateway.server import JeltzServer
-
-    if not profiles_dir.is_dir():
-        click.echo(f"Profiles directory not found: {profiles_dir}", err=True)
-        raise SystemExit(1)
 
     custom_prompt: str | None = None
     if system_prompt is not None:
         custom_prompt = system_prompt.read_text()
 
-    server = JeltzServer(profiles_dir=profiles_dir, db_path=db_path)
-    client = ChatClient(
-        server=server,
-        api_url=api_url,
-        model=model,
-        api_key=api_key,
-        temperature=temperature,
-        system_prompt=custom_prompt,
-    )
+    if daemon_url:
+        # Daemon mode — connect to a running jeltz daemon
+        client = ChatClient(
+            daemon_url=daemon_url,
+            api_url=api_url,
+            model=model,
+            api_key=api_key,
+            temperature=temperature,
+            system_prompt=custom_prompt,
+        )
+    else:
+        # In-process mode — start a local JeltzServer
+        if not profiles_dir.is_dir():
+            click.echo(f"Profiles directory not found: {profiles_dir}", err=True)
+            raise SystemExit(1)
+
+        server = JeltzServer(profiles_dir=profiles_dir, db_path=db_path)
+        client = ChatClient(
+            server=server,
+            api_url=api_url,
+            model=model,
+            api_key=api_key,
+            temperature=temperature,
+            system_prompt=custom_prompt,
+        )
 
     async def _run() -> None:
         await client.initialize()
         try:
-            device_count = len(server.aggregator.device_names) if server.aggregator else 0
-            print_banner(device_count, client.tool_count, model, api_url)
+            tool_count = client.tool_count
+            # In daemon mode, tool_count is our only indicator of device count
+            device_tools = tool_count - 4  # subtract 4 fleet tools
+            device_count = max(device_tools, 0)  # rough estimate
+            if client.server and client.server.aggregator:
+                device_count = len(client.server.aggregator.device_names)
+            print_banner(device_count, tool_count, model, api_url)
 
             while True:
                 try:
@@ -295,7 +335,11 @@ def chat(
                     continue
 
                 try:
+                    streaming = False
                     async for event in client.send_message(user_input):
+                        if isinstance(event, StreamChunkEvent) and not streaming:
+                            render_stream_start()
+                            streaming = True
                         render_event(event)
                 except Exception as e:
                     print_error(str(e))
@@ -503,3 +547,76 @@ def add_device(profile: Path, profiles_dir: Path) -> None:
 
     shutil.copy2(profile, dest)
     click.echo(f"✓ Added {model.device.name} ({dest})")
+
+
+_INIT_MOCK_PROFILE = """\
+# Mock sensor — simulated device for testing without hardware.
+# Customize the mock_responses to match your real device's protocol,
+# then swap protocol = "mock" for protocol = "serial" or "mqtt".
+
+[device]
+name = "mock_sensor"
+description = "Simulated temperature + humidity sensor"
+
+[connection]
+protocol = "mock"
+timeout_ms = 1000
+
+[connection.mock_responses]
+READ_TEMP = "22.5"
+READ_HUMID = "47.3"
+PING = "PONG"
+
+[[tools]]
+name = "get_temperature"
+description = "Get current temperature reading"
+command = "READ_TEMP"
+
+[tools.returns]
+type = "float"
+unit = "celsius"
+
+[[tools]]
+name = "get_humidity"
+description = "Get current relative humidity reading"
+command = "READ_HUMID"
+
+[tools.returns]
+type = "float"
+unit = "percent"
+
+[health]
+check_command = "PING"
+expected = "PONG"
+interval_ms = 10000
+"""
+
+
+@main.command()
+@click.argument("directory", default=".", type=click.Path(path_type=Path))
+def init(directory: Path) -> None:
+    """Scaffold a new Jeltz project.
+
+    Creates a profiles/ directory with a mock sensor profile to get started.
+    DIRECTORY defaults to the current directory.
+    """
+    profiles_dir = directory / "profiles"
+
+    if profiles_dir.is_dir() and list(profiles_dir.glob("*.toml")):
+        click.echo(
+            f"profiles/ already exists with TOML files in {directory.resolve()}",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    directory.mkdir(parents=True, exist_ok=True)
+    profiles_dir.mkdir(exist_ok=True)
+    (profiles_dir / "mock_sensor.toml").write_text(_INIT_MOCK_PROFILE)
+
+    click.echo(f"✓ Initialized Jeltz project in {directory.resolve()}")
+    click.echo("  profiles/mock_sensor.toml — simulated sensor for testing")
+    click.echo()
+    click.echo("Next steps:")
+    click.echo(f"  jeltz test {profiles_dir / 'mock_sensor.toml'}")
+    click.echo(f"  jeltz status -p {profiles_dir}")
+    click.echo(f"  jeltz start -p {profiles_dir}")

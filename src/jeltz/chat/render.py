@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import sys
+
 import click
 
-from jeltz.chat.client import AssistantMessageEvent, ChatEvent, ToolCallEvent, ToolResultEvent
+from jeltz.chat.client import (
+    AssistantMessageEvent,
+    ChatEvent,
+    StreamChunkEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+)
 
 
 def render_event(event: ChatEvent) -> None:
@@ -22,10 +30,25 @@ def render_event(event: ChatEvent) -> None:
         # Don't print successful results — they're verbose and the LLM will
         # summarize them in its response.
 
+    elif isinstance(event, StreamChunkEvent):
+        if event.done:
+            # End of streamed response — print trailing newlines
+            click.echo()
+            click.echo()
+        else:
+            # Print chunk without newline, flush immediately
+            sys.stdout.write(event.text)
+            sys.stdout.flush()
+
     elif isinstance(event, AssistantMessageEvent):
         click.echo()
         click.echo(event.content)
         click.echo()
+
+
+def render_stream_start() -> None:
+    """Print a blank line before streamed output begins."""
+    click.echo()
 
 
 def print_banner(device_count: int, tool_count: int, model: str, api_url: str) -> None:

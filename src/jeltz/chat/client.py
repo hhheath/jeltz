@@ -1,8 +1,8 @@
 """Chat client — bridges a local LLM to Jeltz's MCP tools.
 
 Talks to any OpenAI-compatible API (Ollama, llama.cpp, LM Studio, vLLM)
-and routes tool calls through JeltzServer in-process. The LLM reasons
-about the sensor fleet; Jeltz executes the tool calls against real hardware.
+and routes tool calls through Jeltz — either in-process (JeltzServer) or
+remotely (MCP client connected to a running ``jeltz daemon``).
 """
 
 from __future__ import annotations
@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any
 
-from mcp.types import Tool
+from mcp.types import CallToolResult, Tool
 from openai import AsyncOpenAI
 
 from jeltz.gateway.server import JeltzServer
@@ -48,12 +49,20 @@ class ToolResultEvent:
 
 @dataclass
 class AssistantMessageEvent:
-    """The LLM produced a text response."""
+    """The LLM produced a complete text response (non-streaming fallback)."""
 
     content: str
 
 
-ChatEvent = ToolCallEvent | ToolResultEvent | AssistantMessageEvent
+@dataclass
+class StreamChunkEvent:
+    """A partial text chunk from a streaming response."""
+
+    text: str
+    done: bool = False
+
+
+ChatEvent = ToolCallEvent | ToolResultEvent | AssistantMessageEvent | StreamChunkEvent
 
 
 # ---------------------------------------------------------------------------
@@ -106,48 +115,37 @@ def convert_tools(mcp_tools: list[Tool]) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# System prompt
+# System prompt — works for both in-process and daemon modes
 # ---------------------------------------------------------------------------
 
 
-def build_system_prompt(server: JeltzServer) -> str:
-    """Generate a system prompt from live server state.
+def build_system_prompt_from_tools(mcp_tools: list[Tool]) -> str:
+    """Generate a system prompt from a list of MCP tools.
 
-    Lists connected devices, their protocols, health, and available tools
-    so the LLM knows what it's working with.
+    Used by both in-process and daemon modes.
     """
-    lines: list[str] = []
+    device_tools: list[str] = []
+    fleet_tools: list[str] = []
+    for tool in mcp_tools:
+        desc = tool.description or ""
+        if tool.name.startswith("fleet."):
+            fleet_tools.append(f"- {tool.name}: {desc}")
+        else:
+            device_tools.append(f"- {tool.name}: {desc}")
 
-    if server.aggregator:
-        statuses = server.aggregator.all_statuses()
-        for name, status in statuses.items():
-            if status.healthy:
-                health = "healthy"
-            elif status.connected:
-                health = "connected"
-            else:
-                health = "disconnected"
-            desc = status.device.model.device.description or "no description"
-            protocol = status.device.model.connection.protocol
-            lines.append(f"- {name} ({protocol}, {health}): {desc}")
-            for t in status.device.model.tools:
-                lines.append(f"  - {name}.{t.name}: {t.description or ''}")
-
-    device_section = "\n".join(lines) if lines else "No devices connected."
+    device_section = "\n".join(device_tools) if device_tools else "No device tools available."
+    fleet_section = "\n".join(fleet_tools) if fleet_tools else "No fleet tools available."
 
     return f"""\
 You are an AI assistant with access to a fleet of physical sensors and devices \
 via the Jeltz gateway. You can call tools to read sensors, query history, and \
 detect anomalies.
 
-Connected devices:
+Device tools:
 {device_section}
 
-Fleet-level tools:
-- fleet.list_devices: List all devices and their health status
-- fleet.get_all_readings: Get latest readings from every sensor at once
-- fleet.get_history: Get time-series data for a specific sensor (for trends, drift)
-- fleet.search_anomalies: Find sensors deviating from their rolling baseline
+Fleet tools:
+{fleet_section}
 
 When the user asks about their sensors or devices, use the tools to get real \
 data before answering. For broad questions like "anything weird?", start with \
@@ -158,37 +156,33 @@ Always ground your responses in actual sensor data. If a tool call fails, say so
 honestly."""
 
 
+def build_system_prompt(server: JeltzServer) -> str:
+    """Generate a system prompt from live server state (in-process mode)."""
+    return build_system_prompt_from_tools(server.handle_list_tools())
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _serialize_assistant_message(message: Any) -> dict[str, Any]:
-    """Build a history-safe dict from an OpenAI ChatCompletionMessage.
+def _serialize_assistant_message(
+    content: str | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a history-safe assistant message dict.
 
     Only includes fields the API expects back: role, content, tool_calls.
-    Avoids dumping the entire Pydantic model which may include fields
-    (refusal, audio, annotations) that local APIs reject.
     """
     entry: dict[str, Any] = {"role": "assistant"}
-    if message.content:
-        entry["content"] = message.content
-    if message.tool_calls:
-        entry["tool_calls"] = [
-            {
-                "id": tc.id,
-                "type": "function",
-                "function": {
-                    "name": tc.function.name,
-                    "arguments": tc.function.arguments or "{}",
-                },
-            }
-            for tc in message.tool_calls
-        ]
+    if content:
+        entry["content"] = content
+    if tool_calls:
+        entry["tool_calls"] = tool_calls
     return entry
 
 
-def _extract_text(result: Any) -> str:
+def _extract_text(result: CallToolResult) -> str:
     """Extract text content from a CallToolResult."""
     if result.content:
         first = result.content[0]
@@ -204,9 +198,16 @@ def _extract_text(result: Any) -> str:
 
 @dataclass
 class ChatClient:
-    """Bridges a local LLM to Jeltz's MCP tools via an OpenAI-compatible API."""
+    """Bridges a local LLM to Jeltz's MCP tools via an OpenAI-compatible API.
 
-    server: JeltzServer
+    Two modes:
+    - **In-process**: pass ``server`` — starts JeltzServer, calls tools directly.
+    - **Daemon**: pass ``daemon_url`` — connects to a running ``jeltz daemon``
+      via MCP over HTTP and calls tools remotely.
+    """
+
+    server: JeltzServer | None = None
+    daemon_url: str | None = None
     api_url: str = "http://localhost:11434/v1"
     model: str = "llama3.2"
     api_key: str = field(default="jeltz", repr=False)
@@ -217,30 +218,80 @@ class ChatClient:
     _openai_tools: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False)
     _history: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False)
     _client: AsyncOpenAI | None = field(default=None, init=False, repr=False)
+    _mcp_session: Any = field(default=None, init=False, repr=False)
+    _exit_stack: AsyncExitStack | None = field(default=None, init=False, repr=False)
 
     async def initialize(self) -> None:
-        """Start the server, load tools, build system prompt, create API client."""
-        discovery = await self.server.start()
-        for path, error in discovery.errors:
-            logger.warning("skipped profile %s: %s", path, error)
-
-        # Convert MCP tools to OpenAI format
-        mcp_tools = self.server.handle_list_tools()
-        self._openai_tools = convert_tools(mcp_tools)
-
-        # Build system prompt (custom or auto-generated)
-        prompt = self.system_prompt or build_system_prompt(self.server)
-        self._history = [{"role": "system", "content": prompt}]
+        """Start the backend and create the OpenAI client."""
+        if self.daemon_url:
+            await self._init_daemon()
+        elif self.server:
+            await self._init_in_process()
+        else:
+            raise ValueError("either server or daemon_url is required")
 
         # Create OpenAI client
         self._client = AsyncOpenAI(base_url=self.api_url, api_key=self.api_key)
 
+    async def _init_in_process(self) -> None:
+        """Initialize in-process mode: start JeltzServer."""
+        assert self.server is not None
+        discovery = await self.server.start()
+        for path, error in discovery.errors:
+            logger.warning("skipped profile %s: %s", path, error)
+
+        mcp_tools = self.server.handle_list_tools()
+        self._openai_tools = convert_tools(mcp_tools)
+
+        prompt = self.system_prompt or build_system_prompt(self.server)
+        self._history = [{"role": "system", "content": prompt}]
+
+    async def _init_daemon(self) -> None:
+        """Initialize daemon mode: connect to a running jeltz daemon via MCP."""
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+
+        assert self.daemon_url is not None
+
+        self._exit_stack = AsyncExitStack()
+        read_stream, write_stream, _ = await self._exit_stack.enter_async_context(
+            streamablehttp_client(self.daemon_url)
+        )
+        session: ClientSession = await self._exit_stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
+        await session.initialize()
+        self._mcp_session = session
+
+        # List tools from the daemon
+        result = await session.list_tools()
+        mcp_tools = result.tools
+        self._openai_tools = convert_tools(mcp_tools)
+
+        prompt = self.system_prompt or build_system_prompt_from_tools(mcp_tools)
+        self._history = [{"role": "system", "content": prompt}]
+
     async def shutdown(self) -> None:
-        """Stop the server and clean up."""
-        await self.server.stop()
+        """Stop the backend and clean up."""
+        if self.server:
+            await self.server.stop()
+        if self._exit_stack:
+            await self._exit_stack.aclose()
+            self._exit_stack = None
+        self._mcp_session = None
         if self._client:
             await self._client.close()
             self._client = None
+
+    async def _call_tool(
+        self, name: str, arguments: dict[str, Any],
+    ) -> CallToolResult:
+        """Call a tool via the appropriate backend."""
+        if self._mcp_session:
+            return await self._mcp_session.call_tool(name, arguments)  # type: ignore[no-any-return]
+        if self.server:
+            return await self.server.handle_call_tool(name, arguments)
+        raise RuntimeError("no backend available")
 
     async def send_message(self, user_message: str) -> AsyncGenerator[ChatEvent, None]:
         """Send a user message, handle tool calls, yield events for rendering.
@@ -267,43 +318,106 @@ class ChatClient:
             raise
 
     async def _run_tool_loop(self) -> AsyncGenerator[ChatEvent, None]:
-        """Inner loop: call LLM, execute tool calls, repeat until done."""
+        """Inner loop: call LLM, execute tool calls, repeat until done.
+
+        Uses streaming for all API calls. Streams text chunks to the renderer
+        as they arrive, and accumulates tool call deltas until complete.
+        """
         assert self._client is not None
 
         for _round in range(MAX_TOOL_ROUNDS):
-            response = await self._client.chat.completions.create(
+            content_parts: list[str] = []
+            # tool_calls_acc: {index: {"id": ..., "name": ..., "arguments": ...}}
+            tool_calls_acc: dict[int, dict[str, str]] = {}
+
+            stream = await self._client.chat.completions.create(
                 model=self.model,
                 messages=self._history,  # type: ignore[arg-type]
                 tools=self._openai_tools if self._openai_tools else None,  # type: ignore[arg-type]
                 temperature=self.temperature,
+                stream=True,
             )
 
-            message = response.choices[0].message
-            self._history.append(_serialize_assistant_message(message))
+            async for chunk in stream:  # type: ignore[union-attr]
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if not delta:
+                    continue
 
-            # No tool calls — yield final response and stop
-            if not message.tool_calls:
-                if message.content:
-                    yield AssistantMessageEvent(content=message.content)
+                # Accumulate text content and stream it to the renderer
+                if delta.content:
+                    content_parts.append(delta.content)
+                    yield StreamChunkEvent(text=delta.content)
+
+                # Accumulate tool call deltas
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tool_calls_acc:
+                            tool_calls_acc[idx] = {
+                                "id": "",
+                                "name": "",
+                                "arguments": "",
+                            }
+                        acc = tool_calls_acc[idx]
+                        if tc_delta.id:
+                            acc["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                acc["name"] += tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                acc["arguments"] += tc_delta.function.arguments
+
+            full_content = "".join(content_parts) or None
+
+            # Signal end of streamed text
+            if content_parts:
+                yield StreamChunkEvent(text="", done=True)
+
+            # Build history entry
+            serialized_tool_calls: list[dict[str, Any]] | None = None
+            if tool_calls_acc:
+                serialized_tool_calls = [
+                    {
+                        "id": acc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": acc["name"],
+                            "arguments": acc["arguments"] or "{}",
+                        },
+                    }
+                    for acc in (
+                        tool_calls_acc[i]
+                        for i in sorted(tool_calls_acc)
+                    )
+                ]
+
+            self._history.append(
+                _serialize_assistant_message(full_content, serialized_tool_calls)
+            )
+
+            # No tool calls — we're done
+            if not tool_calls_acc:
+                # If we didn't stream any content, yield it as a single message
+                if full_content and not content_parts:
+                    yield AssistantMessageEvent(content=full_content)
                 return
 
             # Execute each tool call
-            for tc in message.tool_calls:
-                fn = tc.function  # type: ignore[union-attr]
-                mcp_name = api_name_to_mcp(fn.name)
+            for acc in (tool_calls_acc[i] for i in sorted(tool_calls_acc)):
+                mcp_name = api_name_to_mcp(acc["name"])
                 try:
-                    args = json.loads(fn.arguments) if fn.arguments else {}
+                    args = json.loads(acc["arguments"]) if acc["arguments"] else {}
                 except json.JSONDecodeError:
                     args = {}
                     logger.warning(
                         "LLM returned invalid JSON arguments for %s: %r",
-                        mcp_name, fn.arguments,
+                        mcp_name, acc["arguments"],
                     )
 
                 yield ToolCallEvent(name=mcp_name, arguments=args)
 
                 try:
-                    result = await self.server.handle_call_tool(mcp_name, args)
+                    result = await self._call_tool(mcp_name, args)
                     content_text = _extract_text(result)
                     if result.isError:
                         result_text = f"Error: {content_text}"
@@ -323,7 +437,7 @@ class ChatClient:
 
                 self._history.append({
                     "role": "tool",
-                    "tool_call_id": tc.id,
+                    "tool_call_id": acc["id"],
                     "content": result_text,
                 })
 
@@ -335,15 +449,24 @@ class ChatClient:
                 "and respond to the user now."
             ),
         })
-        response = await self._client.chat.completions.create(
+
+        content_parts = []
+        stream = await self._client.chat.completions.create(
             model=self.model,
             messages=self._history,  # type: ignore[arg-type]
             temperature=self.temperature,
+            stream=True,
         )
-        final = response.choices[0].message
-        self._history.append(_serialize_assistant_message(final))
-        if final.content:
-            yield AssistantMessageEvent(content=final.content)
+        async for chunk in stream:  # type: ignore[union-attr]
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if delta and delta.content:
+                content_parts.append(delta.content)
+                yield StreamChunkEvent(text=delta.content)
+
+        final_content = "".join(content_parts) or None
+        if content_parts:
+            yield StreamChunkEvent(text="", done=True)
+        self._history.append(_serialize_assistant_message(final_content))
 
     @property
     def history(self) -> list[dict[str, Any]]:

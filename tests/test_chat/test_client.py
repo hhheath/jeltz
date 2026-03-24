@@ -13,8 +13,8 @@ import pytest
 from mcp.types import Tool
 
 from jeltz.chat.client import (
-    AssistantMessageEvent,
     ChatClient,
+    StreamChunkEvent,
     ToolCallEvent,
     ToolResultEvent,
     api_name_to_mcp,
@@ -69,7 +69,6 @@ class TestNameMapping:
         assert mcp_name_to_api("simple_tool") == "simple_tool"
 
     def test_mcp_to_api_only_first_dot(self) -> None:
-        # MCP names should only have one dot, but verify only first is replaced
         assert mcp_name_to_api("a.b.c") == "a__b.c"
 
     def test_api_to_mcp_with_double_underscore(self) -> None:
@@ -92,9 +91,7 @@ class TestNameMapping:
         """Document known limitation: device names with __ break the mapping."""
         name = "my__sensor.get_reading"
         api = mcp_name_to_api(name)
-        # Forward: "my__sensor.get_reading" → "my__sensor__get_reading"
         assert api == "my__sensor__get_reading"
-        # Reverse: replaces first __ → "my.sensor__get_reading" (wrong!)
         assert api_name_to_mcp(api) != name
 
     def test_no_dot_no_underscore(self) -> None:
@@ -160,7 +157,6 @@ class TestConvertTools:
         assert result[0]["function"]["description"] == ""
 
     def test_empty_input_schema(self) -> None:
-        """Tools with empty properties (like fleet.list_devices)."""
         mcp_tools = [
             Tool(
                 name="test.tool", description="Test",
@@ -201,8 +197,7 @@ class TestBuildSystemPrompt:
         try:
             prompt = build_system_prompt(server)
             assert "test_sensor" in prompt
-            assert "mock" in prompt
-            assert "Test temperature sensor" in prompt
+            assert "get_reading" in prompt
         finally:
             await server.stop()
 
@@ -233,40 +228,100 @@ class TestBuildSystemPrompt:
             profiles_dir=Path("/tmp/nonexistent"), db_path=":memory:",
         )
         prompt = build_system_prompt(server)
-        assert "No devices connected" in prompt
+        assert "No device tools available" in prompt
 
 
 # ---------------------------------------------------------------------------
-# Helpers for mocking OpenAI responses
+# Helpers for mocking streaming OpenAI responses
 # ---------------------------------------------------------------------------
 
 
-def _make_tool_call(
-    name: str,
-    arguments: dict[str, Any] | str | None = None,
-    call_id: str = "call_1",
+def _make_tool_call_delta(
+    name: str | None = None,
+    arguments: str | None = None,
+    call_id: str | None = None,
+    index: int = 0,
 ) -> SimpleNamespace:
-    """Build a mock tool call using SimpleNamespace for strict attribute access."""
-    if arguments is None:
-        args_str = "{}"
-    elif isinstance(arguments, str):
-        args_str = arguments
-    else:
-        args_str = json.dumps(arguments)
-    return SimpleNamespace(
-        id=call_id,
-        type="function",
-        function=SimpleNamespace(name=name, arguments=args_str),
-    )
+    """Build a tool call delta chunk."""
+    fn = SimpleNamespace(name=name, arguments=arguments)
+    return SimpleNamespace(index=index, id=call_id, function=fn)
 
 
-def _make_completion(
+def _make_stream_chunk(
     content: str | None = None,
     tool_calls: list[SimpleNamespace] | None = None,
 ) -> SimpleNamespace:
-    """Build a mock ChatCompletion response using SimpleNamespace."""
-    message = SimpleNamespace(content=content, tool_calls=tool_calls)
-    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+    """Build a single streaming chunk."""
+    delta = SimpleNamespace(content=content, tool_calls=tool_calls)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+
+async def _make_stream(
+    chunks: list[SimpleNamespace],
+) -> AsyncMock:
+    """Build an async iterator that yields chunks, mimicking a stream."""
+    async def _iter() -> Any:
+        for chunk in chunks:
+            yield chunk
+
+    mock = AsyncMock()
+    mock.__aiter__ = lambda self: _iter()
+    return mock
+
+
+def _text_stream(text: str) -> list[SimpleNamespace]:
+    """Build stream chunks that spell out a text response word by word."""
+    words = text.split(" ")
+    chunks = []
+    for i, word in enumerate(words):
+        suffix = " " if i < len(words) - 1 else ""
+        chunks.append(_make_stream_chunk(content=word + suffix))
+    return chunks
+
+
+def _tool_call_stream(
+    name: str,
+    arguments: dict[str, Any] | str = "{}",
+    call_id: str = "call_1",
+    index: int = 0,
+) -> list[SimpleNamespace]:
+    """Build stream chunks for a single tool call."""
+    args_str = arguments if isinstance(arguments, str) else json.dumps(arguments)
+    return [
+        _make_stream_chunk(tool_calls=[
+            _make_tool_call_delta(name=name, call_id=call_id, index=index),
+        ]),
+        _make_stream_chunk(tool_calls=[
+            _make_tool_call_delta(arguments=args_str, index=index),
+        ]),
+    ]
+
+
+async def _setup_client(
+    profiles_dir: Path,
+    stream_responses: list[list[SimpleNamespace]],
+) -> tuple[ChatClient, AsyncMock]:
+    """Set up a ChatClient with mocked streaming responses.
+
+    Returns (client, mock_api) — caller must call client.shutdown().
+    """
+    server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
+    client = ChatClient(server=server)
+
+    streams = []
+    for chunks in stream_responses:
+        streams.append(await _make_stream(chunks))
+
+    mock_openai = AsyncMock()
+    mock_openai.chat.completions.create = AsyncMock(side_effect=streams)
+    mock_openai.close = AsyncMock()
+
+    with patch("jeltz.chat.client.AsyncOpenAI", return_value=mock_openai):
+        await client.initialize()
+
+    # Swap in our mock (initialize created a real one, but we patched the class)
+    client._client = mock_openai  # type: ignore[assignment]
+    return client, mock_openai
 
 
 # ---------------------------------------------------------------------------
@@ -275,337 +330,245 @@ def _make_completion(
 
 
 class TestChatLoop:
-    async def test_simple_response(self, profiles_dir: Path) -> None:
-        """LLM responds without calling any tools."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
-
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(
-                return_value=_make_completion(content="All sensors look fine.")
+    async def test_simple_streamed_response(self, profiles_dir: Path) -> None:
+        """LLM streams a text response without tool calls."""
+        client, _ = await _setup_client(
+            profiles_dir, [_text_stream("All sensors look fine.")]
+        )
+        try:
+            events = [e async for e in client.send_message("anything weird?")]
+            stream_chunks = [
+                e for e in events if isinstance(e, StreamChunkEvent)
+            ]
+            # Should have text chunks + a done marker
+            text = "".join(
+                e.text for e in stream_chunks if not e.done
             )
-            mock_api.close = AsyncMock()
-
-            await client.initialize()
-            try:
-                events = [e async for e in client.send_message("anything weird?")]
-                assert len(events) == 1
-                assert isinstance(events[0], AssistantMessageEvent)
-                assert events[0].content == "All sensors look fine."
-            finally:
-                await client.shutdown()
+            assert text == "All sensors look fine."
+            assert any(e.done for e in stream_chunks)
+        finally:
+            await client.shutdown()
 
     async def test_single_tool_call(self, profiles_dir: Path) -> None:
         """LLM calls one tool, gets result, then responds."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
+        tool_chunks = _tool_call_stream("fleet__list_devices", "{}", "call_1")
+        text_chunks = _text_stream("You have 1 device connected.")
 
-        tc = _make_tool_call("fleet__list_devices", {})
-        responses = [
-            _make_completion(tool_calls=[tc]),
-            _make_completion(content="You have 1 device connected."),
-        ]
+        client, _ = await _setup_client(
+            profiles_dir, [tool_chunks, text_chunks]
+        )
+        try:
+            events = [e async for e in client.send_message("what devices?")]
 
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(side_effect=responses)
-            mock_api.close = AsyncMock()
+            tool_call = next(
+                e for e in events if isinstance(e, ToolCallEvent)
+            )
+            assert tool_call.name == "fleet.list_devices"
 
-            await client.initialize()
-            try:
-                events = [e async for e in client.send_message("what devices?")]
+            tool_result = next(
+                e for e in events if isinstance(e, ToolResultEvent)
+            )
+            assert not tool_result.is_error
+            assert "test_sensor" in tool_result.result
 
-                tool_call = next(
-                    e for e in events if isinstance(e, ToolCallEvent)
-                )
-                assert tool_call.name == "fleet.list_devices"
-
-                tool_result = next(
-                    e for e in events if isinstance(e, ToolResultEvent)
-                )
-                assert not tool_result.is_error
-                assert "test_sensor" in tool_result.result
-
-                assistant = next(
-                    e for e in events if isinstance(e, AssistantMessageEvent)
-                )
-                assert assistant.content == "You have 1 device connected."
-            finally:
-                await client.shutdown()
+            text = "".join(
+                e.text for e in events
+                if isinstance(e, StreamChunkEvent) and not e.done
+            )
+            assert "1 device connected" in text
+        finally:
+            await client.shutdown()
 
     async def test_parallel_tool_calls(self, profiles_dir: Path) -> None:
         """LLM calls multiple tools in a single response."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
-
-        tc1 = _make_tool_call("fleet__list_devices", {}, call_id="call_1")
-        tc2 = _make_tool_call(
-            "fleet__search_anomalies", {}, call_id="call_2",
+        tool_chunks = (
+            _tool_call_stream("fleet__list_devices", "{}", "call_1", index=0)
+            + _tool_call_stream(
+                "fleet__search_anomalies", "{}", "call_2", index=1,
+            )
         )
-        responses = [
-            _make_completion(tool_calls=[tc1, tc2]),
-            _make_completion(content="Found some anomalies."),
-        ]
+        text_chunks = _text_stream("Found some anomalies.")
 
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(side_effect=responses)
-            mock_api.close = AsyncMock()
+        client, _ = await _setup_client(
+            profiles_dir, [tool_chunks, text_chunks]
+        )
+        try:
+            events = [e async for e in client.send_message("check it")]
+            tool_calls = [
+                e for e in events if isinstance(e, ToolCallEvent)
+            ]
+            assert len(tool_calls) == 2
+            assert tool_calls[0].name == "fleet.list_devices"
+            assert tool_calls[1].name == "fleet.search_anomalies"
 
-            await client.initialize()
-            try:
-                events = [e async for e in client.send_message("check it")]
-                tool_calls = [
-                    e for e in events if isinstance(e, ToolCallEvent)
-                ]
-                tool_results = [
-                    e for e in events if isinstance(e, ToolResultEvent)
-                ]
-                assert len(tool_calls) == 2
-                assert len(tool_results) == 2
-                assert tool_calls[0].name == "fleet.list_devices"
-                assert tool_calls[1].name == "fleet.search_anomalies"
-
-                # Verify tool_call_ids are correctly tracked in history
-                tool_msgs = [
-                    m for m in client.history if m.get("role") == "tool"
-                ]
-                assert len(tool_msgs) == 2
-                assert {m["tool_call_id"] for m in tool_msgs} == {
-                    "call_1", "call_2",
-                }
-            finally:
-                await client.shutdown()
+            tool_msgs = [
+                m for m in client.history if m.get("role") == "tool"
+            ]
+            assert len(tool_msgs) == 2
+            assert {m["tool_call_id"] for m in tool_msgs} == {
+                "call_1", "call_2",
+            }
+        finally:
+            await client.shutdown()
 
     async def test_tool_call_error(self, profiles_dir: Path) -> None:
         """Tool call fails — error is passed to the LLM."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
+        tool_chunks = _tool_call_stream("nonexistent__tool", "{}")
+        text_chunks = _text_stream("That tool doesn't exist.")
 
-        tc = _make_tool_call("nonexistent__tool", {})
-        responses = [
-            _make_completion(tool_calls=[tc]),
-            _make_completion(content="That tool doesn't exist."),
-        ]
-
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(side_effect=responses)
-            mock_api.close = AsyncMock()
-
-            await client.initialize()
-            try:
-                events = [e async for e in client.send_message("call something")]
-                error_events = [
-                    e for e in events
-                    if isinstance(e, ToolResultEvent) and e.is_error
-                ]
-                assert len(error_events) == 1
-                assert "unknown tool" in error_events[0].result.lower()
-            finally:
-                await client.shutdown()
+        client, _ = await _setup_client(
+            profiles_dir, [tool_chunks, text_chunks]
+        )
+        try:
+            events = [e async for e in client.send_message("call something")]
+            error_events = [
+                e for e in events
+                if isinstance(e, ToolResultEvent) and e.is_error
+            ]
+            assert len(error_events) == 1
+            assert "unknown tool" in error_events[0].result.lower()
+        finally:
+            await client.shutdown()
 
     async def test_tool_call_invalid_json_arguments(
         self, profiles_dir: Path,
     ) -> None:
         """LLM returns malformed JSON for tool arguments."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
+        tool_chunks = _tool_call_stream(
+            "fleet__list_devices", "not valid json",
+        )
+        text_chunks = _text_stream("Done.")
 
-        tc = _make_tool_call("fleet__list_devices", "not valid json")
-        responses = [
-            _make_completion(tool_calls=[tc]),
-            _make_completion(content="Done."),
-        ]
-
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(side_effect=responses)
-            mock_api.close = AsyncMock()
-
-            await client.initialize()
-            try:
-                events = [e async for e in client.send_message("go")]
-                # Tool call should still proceed with empty args
-                tool_call = next(
-                    e for e in events if isinstance(e, ToolCallEvent)
-                )
-                assert tool_call.arguments == {}
-                # Should still produce a result and record it in history
-                assert any(isinstance(e, ToolResultEvent) for e in events)
-                tool_msgs = [
-                    m for m in client.history if m.get("role") == "tool"
-                ]
-                assert len(tool_msgs) == 1
-            finally:
-                await client.shutdown()
+        client, _ = await _setup_client(
+            profiles_dir, [tool_chunks, text_chunks]
+        )
+        try:
+            events = [e async for e in client.send_message("go")]
+            tool_call = next(
+                e for e in events if isinstance(e, ToolCallEvent)
+            )
+            assert tool_call.arguments == {}
+            assert any(isinstance(e, ToolResultEvent) for e in events)
+            tool_msgs = [
+                m for m in client.history if m.get("role") == "tool"
+            ]
+            assert len(tool_msgs) == 1
+        finally:
+            await client.shutdown()
 
     async def test_multi_round_tool_calling(self, profiles_dir: Path) -> None:
         """LLM calls a tool, sees result, calls another tool, then responds."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
-
-        tc1 = _make_tool_call("fleet__list_devices", {}, call_id="call_1")
-        tc2 = _make_tool_call(
-            "test_sensor__get_reading", {}, call_id="call_2",
+        round1 = _tool_call_stream("fleet__list_devices", "{}", "call_1")
+        round2 = _tool_call_stream(
+            "test_sensor__get_reading", "{}", "call_2",
         )
-        responses = [
-            _make_completion(tool_calls=[tc1]),
-            _make_completion(tool_calls=[tc2]),
-            _make_completion(content="Temperature is 22.5C."),
-        ]
+        text_chunks = _text_stream("Temperature is 22.5C.")
 
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(side_effect=responses)
-            mock_api.close = AsyncMock()
-
-            await client.initialize()
-            try:
-                events = [e async for e in client.send_message("read temp")]
-                tool_calls = [
-                    e for e in events if isinstance(e, ToolCallEvent)
-                ]
-                assert len(tool_calls) == 2
-                assert tool_calls[0].name == "fleet.list_devices"
-                assert tool_calls[1].name == "test_sensor.get_reading"
-            finally:
-                await client.shutdown()
+        client, _ = await _setup_client(
+            profiles_dir, [round1, round2, text_chunks]
+        )
+        try:
+            events = [e async for e in client.send_message("read temp")]
+            tool_calls = [
+                e for e in events if isinstance(e, ToolCallEvent)
+            ]
+            assert len(tool_calls) == 2
+            assert tool_calls[0].name == "fleet.list_devices"
+            assert tool_calls[1].name == "test_sensor.get_reading"
+        finally:
+            await client.shutdown()
 
     async def test_conversation_history_accumulates(
         self, profiles_dir: Path,
     ) -> None:
         """History includes system, user, assistant messages across turns."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
+        client, mock_api = await _setup_client(
+            profiles_dir,
+            [_text_stream("Hello!"), _text_stream("Goodbye!")],
+        )
+        try:
+            assert client.history[0]["role"] == "system"
 
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(
-                return_value=_make_completion(content="Hello!")
-            )
-            mock_api.close = AsyncMock()
+            _ = [e async for e in client.send_message("hi")]
+            assert client.history[1]["role"] == "user"
+            assert client.history[1]["content"] == "hi"
+            assert client.history[2]["role"] == "assistant"
+            assert client.history[2]["content"] == "Hello!"
 
-            await client.initialize()
-            try:
-                assert client.history[0]["role"] == "system"
-
-                _ = [e async for e in client.send_message("hi")]
-                assert client.history[1]["role"] == "user"
-                assert client.history[1]["content"] == "hi"
-                assert client.history[2]["role"] == "assistant"
-                assert client.history[2]["content"] == "Hello!"
-
-                _ = [e async for e in client.send_message("bye")]
-                assert client.history[3]["role"] == "user"
-                assert client.history[3]["content"] == "bye"
-            finally:
-                await client.shutdown()
+            _ = [e async for e in client.send_message("bye")]
+            assert client.history[3]["role"] == "user"
+            assert client.history[3]["content"] == "bye"
+        finally:
+            await client.shutdown()
 
     async def test_history_includes_tool_messages(
         self, profiles_dir: Path,
     ) -> None:
         """After a tool call, history contains role=tool with tool_call_id."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
+        tool_chunks = _tool_call_stream(
+            "fleet__list_devices", "{}", "call_abc",
+        )
+        text_chunks = _text_stream("Done.")
 
-        tc = _make_tool_call("fleet__list_devices", {}, call_id="call_abc")
-        responses = [
-            _make_completion(tool_calls=[tc]),
-            _make_completion(content="Done."),
-        ]
+        client, _ = await _setup_client(
+            profiles_dir, [tool_chunks, text_chunks]
+        )
+        try:
+            _ = [e async for e in client.send_message("check")]
+            tool_msgs = [
+                m for m in client.history if m.get("role") == "tool"
+            ]
+            assert len(tool_msgs) == 1
+            assert tool_msgs[0]["tool_call_id"] == "call_abc"
+            assert isinstance(tool_msgs[0]["content"], str)
 
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(side_effect=responses)
-            mock_api.close = AsyncMock()
-
-            await client.initialize()
-            try:
-                _ = [e async for e in client.send_message("check")]
-                tool_msgs = [
-                    m for m in client.history if m.get("role") == "tool"
-                ]
-                assert len(tool_msgs) == 1
-                assert tool_msgs[0]["tool_call_id"] == "call_abc"
-                assert isinstance(tool_msgs[0]["content"], str)
-
-                # Assistant message with tool_calls should include type: function
-                assistant_with_tools = [
-                    m for m in client.history
-                    if m.get("role") == "assistant" and "tool_calls" in m
-                ]
-                assert len(assistant_with_tools) == 1
-                assert assistant_with_tools[0]["tool_calls"][0]["type"] == "function"
-            finally:
-                await client.shutdown()
+            assistant_with_tools = [
+                m for m in client.history
+                if m.get("role") == "assistant" and "tool_calls" in m
+            ]
+            assert len(assistant_with_tools) == 1
+            assert assistant_with_tools[0]["tool_calls"][0]["type"] == "function"
+        finally:
+            await client.shutdown()
 
     async def test_max_iterations_safety_valve(
         self, profiles_dir: Path,
     ) -> None:
         """Runaway tool-calling loop hits MAX_TOOL_ROUNDS and forces a response."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
+        tool_chunks = _tool_call_stream("fleet__list_devices", "{}")
+        final_text = _text_stream("Done summarizing.")
 
-        tc = _make_tool_call("fleet__list_devices", {})
-        endless_tool_calls = _make_completion(tool_calls=[tc])
-        final_response = _make_completion(content="Done summarizing.")
+        # 10 tool rounds + 1 forced summary = 11 streams
+        all_streams = [tool_chunks] * 10 + [final_text]
 
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(
-                side_effect=[endless_tool_calls] * 10 + [final_response]
+        client, mock_api = await _setup_client(profiles_dir, all_streams)
+        try:
+            events = [e async for e in client.send_message("loop forever")]
+
+            text = "".join(
+                e.text for e in events
+                if isinstance(e, StreamChunkEvent) and not e.done
             )
-            mock_api.close = AsyncMock()
+            assert "Done summarizing." in text
 
-            await client.initialize()
-            try:
-                events = [e async for e in client.send_message("loop forever")]
-                assistant_msgs = [
-                    e for e in events if isinstance(e, AssistantMessageEvent)
-                ]
-                assert len(assistant_msgs) == 1
-                assert assistant_msgs[0].content == "Done summarizing."
+            assert mock_api.chat.completions.create.call_count == 11
 
-                # 10 tool rounds + 1 forced summary = 11 API calls
-                assert mock_api.chat.completions.create.call_count == 11
-
-                # History should contain the safety valve system message
-                safety_msgs = [
-                    m for m in client.history
-                    if m.get("role") == "system"
-                    and "many tool calls" in m.get("content", "")
-                ]
-                assert len(safety_msgs) == 1
-            finally:
-                await client.shutdown()
+            safety_msgs = [
+                m for m in client.history
+                if m.get("role") == "system"
+                and "many tool calls" in m.get("content", "")
+            ]
+            assert len(safety_msgs) == 1
+        finally:
+            await client.shutdown()
 
     async def test_tool_count(self, profiles_dir: Path) -> None:
         """tool_count reflects device + fleet tools."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
-
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.close = AsyncMock()
-
-            await client.initialize()
-            try:
-                # 1 device tool + 4 fleet tools = 5
-                assert client.tool_count == 5
-            finally:
-                await client.shutdown()
+        client, _ = await _setup_client(profiles_dir, [])
+        try:
+            assert client.tool_count == 5
+        finally:
+            await client.shutdown()
 
     async def test_custom_system_prompt(self, profiles_dir: Path) -> None:
         """Custom system prompt overrides the auto-generated one."""
@@ -614,20 +577,18 @@ class TestChatLoop:
             server=server,
             system_prompt="You are a helpful brewery assistant.",
         )
-
         with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
             mock_api = AsyncMock()
             MockOpenAI.return_value = mock_api
             mock_api.close = AsyncMock()
-
             await client.initialize()
-            try:
-                assert (
-                    client.history[0]["content"]
-                    == "You are a helpful brewery assistant."
-                )
-            finally:
-                await client.shutdown()
+        try:
+            assert (
+                client.history[0]["content"]
+                == "You are a helpful brewery assistant."
+            )
+        finally:
+            await client.shutdown()
 
     async def test_send_message_before_initialize(
         self, profiles_dir: Path,
@@ -635,7 +596,6 @@ class TestChatLoop:
         """Calling send_message before initialize raises RuntimeError."""
         server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
         client = ChatClient(server=server)
-
         with pytest.raises(RuntimeError, match="not initialized"):
             _ = [e async for e in client.send_message("hello")]
 
@@ -659,33 +619,27 @@ class TestChatLoop:
                 history_before = len(client.history)
                 with pytest.raises(ConnectionError):
                     _ = [e async for e in client.send_message("hello")]
-                # User message should be rolled back
                 assert len(client.history) == history_before
             finally:
                 await client.shutdown()
 
     async def test_empty_content_response(self, profiles_dir: Path) -> None:
-        """LLM returns no content and no tool calls — yields nothing."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
+        """LLM returns empty stream — yields only done marker."""
+        empty_stream = [_make_stream_chunk()]  # no content, no tool calls
 
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(
-                return_value=_make_completion(content=None, tool_calls=None)
-            )
-            mock_api.close = AsyncMock()
-
-            await client.initialize()
-            try:
-                events = [e async for e in client.send_message("hello")]
-                assert events == []
-                # History should still have: system, user, assistant (empty)
-                assert len(client.history) == 3
-                assert client.history[2]["role"] == "assistant"
-            finally:
-                await client.shutdown()
+        client, _ = await _setup_client(profiles_dir, [empty_stream])
+        try:
+            events = [e async for e in client.send_message("hello")]
+            # No text chunks, no tool events
+            text_events = [
+                e for e in events if isinstance(e, StreamChunkEvent) and e.text
+            ]
+            assert text_events == []
+            # History should still have: system, user, assistant (empty)
+            assert len(client.history) == 3
+            assert client.history[2]["role"] == "assistant"
+        finally:
+            await client.shutdown()
 
     async def test_api_key_not_in_repr(self, profiles_dir: Path) -> None:
         server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
@@ -696,170 +650,120 @@ class TestChatLoop:
         self, profiles_dir: Path,
     ) -> None:
         """Ctrl+C during tool execution should roll back history."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
+        tool_chunks = _tool_call_stream("fleet__list_devices", "{}")
 
-        tc = _make_tool_call("fleet__list_devices", {})
-
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(
-                return_value=_make_completion(tool_calls=[tc])
-            )
-            mock_api.close = AsyncMock()
-
-            await client.initialize()
-            try:
-                history_before = len(client.history)
-                with patch.object(
-                    server, "handle_call_tool",
-                    side_effect=KeyboardInterrupt,
-                ):
-                    with pytest.raises(KeyboardInterrupt):
-                        _ = [e async for e in client.send_message("check")]
-                assert len(client.history) == history_before
-            finally:
-                await client.shutdown()
+        client, _ = await _setup_client(profiles_dir, [tool_chunks])
+        try:
+            history_before = len(client.history)
+            with patch.object(
+                client.server, "handle_call_tool",
+                side_effect=KeyboardInterrupt,
+            ):
+                with pytest.raises(KeyboardInterrupt):
+                    _ = [e async for e in client.send_message("check")]
+            assert len(client.history) == history_before
+        finally:
+            await client.shutdown()
 
     async def test_cancelled_error_rolls_back_history(
         self, profiles_dir: Path,
     ) -> None:
         """asyncio.CancelledError during tool call should roll back."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
+        tool_chunks = _tool_call_stream("fleet__list_devices", "{}")
 
-        tc = _make_tool_call("fleet__list_devices", {})
-
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(
-                return_value=_make_completion(tool_calls=[tc])
-            )
-            mock_api.close = AsyncMock()
-
-            await client.initialize()
-            try:
-                history_before = len(client.history)
-                with patch.object(
-                    server, "handle_call_tool",
-                    side_effect=asyncio.CancelledError,
-                ):
-                    with pytest.raises(asyncio.CancelledError):
-                        _ = [e async for e in client.send_message("check")]
-                assert len(client.history) == history_before
-            finally:
-                await client.shutdown()
+        client, _ = await _setup_client(profiles_dir, [tool_chunks])
+        try:
+            history_before = len(client.history)
+            with patch.object(
+                client.server, "handle_call_tool",
+                side_effect=asyncio.CancelledError,
+            ):
+                with pytest.raises(asyncio.CancelledError):
+                    _ = [e async for e in client.send_message("check")]
+            assert len(client.history) == history_before
+        finally:
+            await client.shutdown()
 
     async def test_handle_call_tool_raises_exception(
         self, profiles_dir: Path,
     ) -> None:
-        """handle_call_tool raising (not returning error) still yields error event."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
+        """handle_call_tool raising (not returning error) yields error event."""
+        tool_chunks = _tool_call_stream("fleet__list_devices", "{}")
+        text_chunks = _text_stream("Sorry about that.")
 
-        tc = _make_tool_call("fleet__list_devices", {})
-        responses = [
-            _make_completion(tool_calls=[tc]),
-            _make_completion(content="Sorry about that."),
-        ]
-
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(side_effect=responses)
-            mock_api.close = AsyncMock()
-
-            await client.initialize()
-            try:
-                with patch.object(
-                    server, "handle_call_tool",
-                    side_effect=RuntimeError("server crashed"),
-                ):
-                    events = [
-                        e async for e in client.send_message("go")
-                    ]
-                error_events = [
-                    e for e in events
-                    if isinstance(e, ToolResultEvent) and e.is_error
+        client, _ = await _setup_client(
+            profiles_dir, [tool_chunks, text_chunks]
+        )
+        try:
+            with patch.object(
+                client.server, "handle_call_tool",
+                side_effect=RuntimeError("server crashed"),
+            ):
+                events = [
+                    e async for e in client.send_message("go")
                 ]
-                assert len(error_events) == 1
-                assert "server crashed" in error_events[0].result
-            finally:
-                await client.shutdown()
+            error_events = [
+                e for e in events
+                if isinstance(e, ToolResultEvent) and e.is_error
+            ]
+            assert len(error_events) == 1
+            assert "server crashed" in error_events[0].result
+        finally:
+            await client.shutdown()
 
     async def test_message_with_content_and_tool_calls(
         self, profiles_dir: Path,
     ) -> None:
         """Assistant message with both content and tool_calls — both preserved."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
-
-        tc = _make_tool_call("fleet__list_devices", {})
-        responses = [
-            _make_completion(content="Let me check...", tool_calls=[tc]),
-            _make_completion(content="Found 1 device."),
+        # Stream has both content chunks and tool call deltas
+        mixed_chunks = [
+            _make_stream_chunk(content="Let me check..."),
+            *_tool_call_stream("fleet__list_devices", "{}", "call_1"),
         ]
+        text_chunks = _text_stream("Found 1 device.")
 
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(side_effect=responses)
-            mock_api.close = AsyncMock()
-
-            await client.initialize()
-            try:
-                _ = [e async for e in client.send_message("check")]
-                assistant_with_tools = [
-                    m for m in client.history
-                    if m.get("role") == "assistant" and "tool_calls" in m
-                ]
-                assert len(assistant_with_tools) == 1
-                assert assistant_with_tools[0]["content"] == "Let me check..."
-                assert len(assistant_with_tools[0]["tool_calls"]) == 1
-            finally:
-                await client.shutdown()
+        client, _ = await _setup_client(
+            profiles_dir, [mixed_chunks, text_chunks]
+        )
+        try:
+            _ = [e async for e in client.send_message("check")]
+            assistant_with_tools = [
+                m for m in client.history
+                if m.get("role") == "assistant" and "tool_calls" in m
+            ]
+            assert len(assistant_with_tools) == 1
+            assert assistant_with_tools[0]["content"] == "Let me check..."
+            assert len(assistant_with_tools[0]["tool_calls"]) == 1
+        finally:
+            await client.shutdown()
 
     async def test_tool_call_with_real_arguments(
         self, profiles_dir: Path,
     ) -> None:
         """Arguments from the LLM are parsed and forwarded to handle_call_tool."""
-        server = JeltzServer(profiles_dir=profiles_dir, db_path=":memory:")
-        client = ChatClient(server=server)
+        args = {
+            "device_id": "test_sensor",
+            "sensor_id": "get_reading",
+            "hours": 12,
+        }
+        tool_chunks = _tool_call_stream("fleet__get_history", args)
+        text_chunks = _text_stream("No history yet.")
 
-        tc = _make_tool_call(
-            "fleet__get_history",
-            {"device_id": "test_sensor", "sensor_id": "get_reading", "hours": 12},
+        client, _ = await _setup_client(
+            profiles_dir, [tool_chunks, text_chunks]
         )
-        responses = [
-            _make_completion(tool_calls=[tc]),
-            _make_completion(content="No history yet."),
-        ]
-
-        with patch("jeltz.chat.client.AsyncOpenAI") as MockOpenAI:
-            mock_api = AsyncMock()
-            MockOpenAI.return_value = mock_api
-            mock_api.chat.completions.create = AsyncMock(side_effect=responses)
-            mock_api.close = AsyncMock()
-
-            await client.initialize()
-            try:
-                events = [e async for e in client.send_message("show history")]
-                tool_call = next(
-                    e for e in events if isinstance(e, ToolCallEvent)
-                )
-                assert tool_call.arguments == {
-                    "device_id": "test_sensor",
-                    "sensor_id": "get_reading",
-                    "hours": 12,
-                }
-                tool_result = next(
-                    e for e in events if isinstance(e, ToolResultEvent)
-                )
-                assert not tool_result.is_error
-            finally:
-                await client.shutdown()
+        try:
+            events = [e async for e in client.send_message("show history")]
+            tool_call = next(
+                e for e in events if isinstance(e, ToolCallEvent)
+            )
+            assert tool_call.arguments == args
+            tool_result = next(
+                e for e in events if isinstance(e, ToolResultEvent)
+            )
+            assert not tool_result.is_error
+        finally:
+            await client.shutdown()
 
     async def test_api_timeout_rolls_back(self, profiles_dir: Path) -> None:
         """Timeout during API call should roll back user message."""
@@ -882,3 +786,25 @@ class TestChatLoop:
                 assert len(client.history) == history_before
             finally:
                 await client.shutdown()
+
+    async def test_streaming_yields_chunks_in_order(
+        self, profiles_dir: Path,
+    ) -> None:
+        """Stream chunks arrive in order and reconstruct the full text."""
+        chunks = [
+            _make_stream_chunk(content="Hello "),
+            _make_stream_chunk(content="world"),
+            _make_stream_chunk(content="!"),
+        ]
+
+        client, _ = await _setup_client(profiles_dir, [chunks])
+        try:
+            events = [e async for e in client.send_message("hi")]
+            stream_chunks = [
+                e for e in events if isinstance(e, StreamChunkEvent)
+            ]
+            text_parts = [e.text for e in stream_chunks if not e.done]
+            assert text_parts == ["Hello ", "world", "!"]
+            assert stream_chunks[-1].done
+        finally:
+            await client.shutdown()

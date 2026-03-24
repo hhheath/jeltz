@@ -89,8 +89,27 @@ class TestMainGroup:
 
     def test_commands_registered(self, runner: CliRunner) -> None:
         result = runner.invoke(main, ["--help"])
-        for cmd in ("start", "daemon", "status", "test", "add-device"):
+        for cmd in ("start", "daemon", "chat", "status", "test", "add-device", "init"):
             assert cmd in result.output
+
+
+class TestVerbose:
+    def test_default_no_verbose(self, runner: CliRunner) -> None:
+        result = runner.invoke(main, ["--help"])
+        assert result.exit_code == 0
+        assert "--verbose" in result.output or "-v" in result.output
+
+    def test_verbose_flag_accepted(
+        self, runner: CliRunner, profiles_dir: Path,
+    ) -> None:
+        result = runner.invoke(main, ["-v", "status", "-p", str(profiles_dir)])
+        assert result.exit_code == 0
+
+    def test_double_verbose(
+        self, runner: CliRunner, profiles_dir: Path,
+    ) -> None:
+        result = runner.invoke(main, ["-vv", "status", "-p", str(profiles_dir)])
+        assert result.exit_code == 0
 
 
 class TestStart:
@@ -458,3 +477,45 @@ class TestAddDevice:
     def test_nonexistent_profile(self, runner: CliRunner) -> None:
         result = runner.invoke(main, ["add-device", "/nonexistent.toml"])
         assert result.exit_code != 0
+
+
+class TestInit:
+    def test_creates_profiles_dir(self, runner: CliRunner, tmp_path: Path) -> None:
+        d = tmp_path / "myproject"
+        result = runner.invoke(main, ["init", str(d)])
+        assert result.exit_code == 0
+        assert (d / "profiles" / "mock_sensor.toml").exists()
+        assert "Initialized" in result.output
+
+    def test_default_current_dir(self, runner: CliRunner, tmp_path: Path) -> None:
+        result = runner.invoke(main, ["init", str(tmp_path)])
+        assert result.exit_code == 0
+        assert (tmp_path / "profiles" / "mock_sensor.toml").exists()
+
+    def test_mock_profile_is_valid(self, runner: CliRunner, tmp_path: Path) -> None:
+        """The scaffolded profile should parse and pass jeltz test."""
+        d = tmp_path / "proj"
+        runner.invoke(main, ["init", str(d)])
+        result = runner.invoke(
+            main, ["test", str(d / "profiles" / "mock_sensor.toml")]
+        )
+        assert result.exit_code == 0
+        assert "✓ Connected" in result.output
+        assert "✓ Health check passed" in result.output
+
+    def test_refuses_existing_profiles(
+        self, runner: CliRunner, tmp_path: Path,
+    ) -> None:
+        d = tmp_path / "existing"
+        (d / "profiles").mkdir(parents=True)
+        (d / "profiles" / "sensor.toml").write_text(MOCK_PROFILE)
+        result = runner.invoke(main, ["init", str(d)])
+        assert result.exit_code == 1
+        assert "already exists" in result.output
+
+    def test_shows_next_steps(self, runner: CliRunner, tmp_path: Path) -> None:
+        d = tmp_path / "proj"
+        result = runner.invoke(main, ["init", str(d)])
+        assert "Next steps" in result.output
+        assert "jeltz test" in result.output
+        assert "jeltz start" in result.output
