@@ -371,4 +371,5 @@ See the [built-in profiles](../profiles/) for more examples, or write your own f
 - **Try `jeltz chat`** — if you have Ollama installed, `jeltz chat -p profiles -m llama3.2` lets you talk to your sensors with a local LLM. No cloud required.
 - **Add a second sensor** — this is where Jeltz gets interesting. Fleet tools like `fleet.get_all_readings` and `fleet.search_anomalies` shine when there are multiple devices to correlate.
 - **Try an MQTT sensor** — connect a Pico W or ESP32 over WiFi. See [`profiles/mqtt_sensor.toml`](../profiles/mqtt_sensor.toml) for the setup.
+- **Try self-describing devices** — if you control the firmware, [`jeltz-arduino`](https://github.com/heath0xFF/jeltz-arduino) lets your device describe itself to the gateway — no TOML profile needed. Register tools in your Arduino sketch and the gateway discovers them automatically.
 - **Write a custom profile** — any device that speaks text commands over serial (or request/reply over MQTT) can be connected to Jeltz.

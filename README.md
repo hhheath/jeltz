@@ -1,6 +1,6 @@
 # Jeltz
 
-> **Status: Phase 1 complete + local LLM chat.** Gateway core, CLI, serial + MQTT adapters, fleet-level tools, SQLite time-series storage, daemon mode, built-in profiles, and `jeltz chat` for local LLM interaction — all working. 367 tests passing. See the [Getting Started guide](docs/getting-started.md) to try it.
+> Gateway core, CLI, serial + MQTT adapters, fleet-level tools, SQLite time-series storage, daemon mode, built-in profiles, and `jeltz chat` for local LLM interaction — all working. 367 tests passing. See the [Getting Started guide](docs/getting-started.md) to try it.
 
 **Your sensors will be processed.**
 
@@ -76,6 +76,15 @@ Deterministic first, agentic second. A 50KB model on a Cortex-M4 handles routine
 
 ## Adding devices
 
+There are two ways to connect a device to Jeltz:
+
+| Approach | Best for | How it works |
+|----------|----------|--------------|
+| **TOML profile** | Any device with a text command protocol. No firmware changes needed. | You write a `.toml` file describing the device's commands. Jeltz generates MCP tools from it. |
+| **Self-describing (jeltz-arduino)** | Arduino/ESP32/Pico W projects where you control the firmware. | The device tells the gateway what it can do. No config files needed on the gateway side. |
+
+Both approaches produce the same result — MCP tools that any LLM can call. Pick whichever fits your workflow. You can mix both in the same fleet.
+
 ### TOML profiles
 
 A device profile is a tool description for the physical world. Think of it like onboarding an AI to a new device — the better the description, the better the agent performs. Write what the device does, how to connect, and what commands it understands. Jeltz generates MCP tools from it.
@@ -126,9 +135,30 @@ Tools:    1
 
 The device firmware just needs to accept text commands over serial (or MQTT) and respond with plain text. See the [built-in profiles](profiles/) for complete firmware examples.
 
-### Self-describing devices (Phase 2)
+### Self-describing devices (jeltz-arduino)
 
-The `jeltz-arduino` C++ library will let devices self-describe to the gateway — no TOML profile needed. Register tools in firmware, plug in the device, and the gateway discovers it automatically.
+If you control the firmware, you can skip TOML entirely. The [`jeltz-arduino`](https://github.com/heath0xFF/jeltz-arduino) C++ library lets devices describe their own capabilities to the gateway:
+
+```cpp
+#include <Jeltz.h>
+
+Jeltz babel("dht22_sensor", "DHT22 temp + humidity");
+
+void setup() {
+    Serial.begin(115200);
+
+    babel.tool("get_temperature", "Get current temperature")
+         .command("READ_TEMP")
+         .returns("float", "celsius");
+
+    babel.health("PING", "PONG");
+    babel.begin(Serial);
+}
+```
+
+Plug in the device and the gateway discovers it automatically — no TOML profile to write or maintain. See the [jeltz-arduino README](https://github.com/heath0xFF/jeltz-arduino) for the full API and examples, or the [protocol spec](docs/self-describing-protocol.md) for wire-level details.
+
+> **Note:** Gateway-side auto-discovery (`--probe` flag) is coming soon. The Arduino library and protocol are ready now.
 
 ## Built-in profiles
 
@@ -295,10 +325,15 @@ jeltz daemon -p profiles --host 0.0.0.0 --port 8374
 
 ## Roadmap
 
-- **Phase 1 (complete):** ~~Core framework~~ ✓, ~~serial adapter~~ ✓, ~~MQTT adapter~~ ✓, ~~SQLite time-series storage~~ ✓, ~~fleet-level tools~~ ✓, ~~CLI~~ ✓, ~~built-in profiles~~ ✓, ~~mock adapter~~ ✓, ~~daemon mode~~ ✓, ~~local LLM chat~~ ✓
-- **Phase 2:** Modbus RTU/TCP adapter, OPC-UA adapter, community profile repository, device namespacing, actuator safety controls
-- **Phase 3:** BLE adapter, CAN bus adapter, `jeltz-arduino` C++ library, USB adapter, Edge Impulse integration, event streaming
-- **Phase 4:** Web dashboard, alert system, IQ9 reference deployment, additional ML platform integrations
+**Done:** Core framework, serial + MQTT + mock adapters, SQLite time-series storage, fleet-level tools, CLI, built-in profiles, daemon mode, local LLM chat, [self-describing device protocol](docs/self-describing-protocol.md)
+
+**Next up:**
+- Gateway-side auto-discovery for [self-describing devices](https://github.com/heath0xFF/jeltz-arduino) (`--probe` flag)
+- Modbus RTU/TCP adapter, OPC-UA adapter
+- Actuator safety controls (escalation policy)
+- Community profile repository
+
+**Later:** BLE adapter, CAN bus adapter, USB adapter, Edge Impulse integration, event streaming, web dashboard, alert system
 
 ## Documentation
 
@@ -309,7 +344,7 @@ jeltz daemon -p profiles --host 0.0.0.0 --port 8374
 ## Development
 
 ```bash
-hatch run test        # Run tests (356 tests, mock adapter, no hardware needed)
+hatch run test        # Run tests (367 tests, mock adapter, no hardware needed)
 hatch run lint        # Ruff linter
 hatch run typecheck   # Mypy strict mode
 ```
